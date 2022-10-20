@@ -1,5 +1,10 @@
 from .pgp_password_db import PGPPasswordDB
 import gnupg
+import logging
+import plumbum
+import pexpect
+import aiofiles
+from aiofiles.os import remove
 
 
 class PGP():
@@ -18,9 +23,27 @@ class PGP():
     def list_keys(self):
         return self.__gpg.list_keys()
 
-    def sign(self, keyid: str, fpath: str) -> str:
+    async def sign(self, keyid: str, fpath: str) -> gnupg.Sign:
         password = self.__pass_db.get_password(keyid)
-        with open(fpath, 'r') as fl:
-            result = self.__gpg.sign_file(
-                file=fl, keyid=keyid, passphrase=password)
-        return result
+        # using gpg.sign_file() will result in wrong PGP signature
+        # https://stackoverflow.com/questions/52065521/python-gnupg-sign-verify-a-tar-archive
+        sign_cmd = plumbum.local['gpg'][
+            '--yes', '--detach-sign', '--armor',
+            '--default-key', keyid, fpath]
+        out, status = pexpect.run(
+            command=' '.join(sign_cmd.formulate()),
+            events={"Enter passphrase:.*": "{0}\r".format(password)},
+            env={"LC_ALL": "en_US.UTF-8"},
+            timeout=1200,
+            withexitstatus=1,
+        )
+        if status != 0:
+            message = f'gpg failed to sign file, error: {out}'
+            logging.error(message)
+            raise Exception(message)
+
+        async with aiofiles.open(f"{fpath}.asc") as fl:
+            contents = await fl.read()
+        await remove(f"{fpath}.asc")
+
+        return contents
