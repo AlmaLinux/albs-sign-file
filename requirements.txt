@@ -1,3 +1,4 @@
 python-gnupg==0.4.8
 plumbum==1.7.2
-pexpect==4.8.0
+fastapi[all]==0.75.0
+fastapi-users[all]==10.1.1

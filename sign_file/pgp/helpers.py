@@ -10,7 +10,6 @@ import gnupg
 import plumbum
 
 
-
 __all__ = [
     "init_gpg",
     "scan_pgp_info_from_file",
@@ -18,21 +17,6 @@ __all__ = [
     "restart_gpg_agent",
     "PGPPasswordDB",
 ]
-
-
-def init_gpg(keyring: str = "/home/alt/.gnupg/pubring.kbx",
-             gpg_binary: str = "/usr/bin/gpg2"):
-    """
-    A gpg binding initialization function.
-
-    Returns
-    -------
-    gnupg.GPG
-        Initialized gpg wrapper.
-    """
-    gpg = gnupg.GPG(gpgbinary=gpg_binary,
-                    keyring=keyring)
-    return gpg
 
 
 def scan_pgp_info_from_file(gpg, key_file):
