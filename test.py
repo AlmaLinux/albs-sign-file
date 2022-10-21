@@ -10,7 +10,7 @@ gpg_binary = "/usr/local/MacGPG2/bin/gpg2"
 keyring = '/Users/kzhukov/.gnupg/pubring.kbx'
 pass_db_dev_pass = ""
 pass_db_dev_mode = False
-pgp_keys = ['EF0F6DF0AFE52FD5']
+pgp_keys = ['EF0F6DF0AFE52FD5', "0673DB399D3E2894"]
 test_file = '/Users/kzhukov/projects/cloudlinux/albs-sign-file/requirements.txt'
 
 pgp = PGP(
@@ -19,12 +19,6 @@ pgp = PGP(
     pgp_keys=pgp_keys,
     pass_db_dev_mode=pass_db_dev_mode,
     pass_db_dev_pass=pass_db_dev_pass)
-
-
-async def do_io():
-    print('io start')
-    await asyncio.sleep(5)
-    print('io end')
 
 
 async def run():

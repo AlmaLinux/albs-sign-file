@@ -8,6 +8,7 @@ PASS_DB_DEV_PASS_DEFAULT = ""
 PASS_DB_DEV_MODE_DEFAULT = False
 TMP_FILE_DIR_DEFAULT = "/tmp"
 PGP_KEYS_ID_DEFAULT = ["EF0F6DF0AFE52FD5", ]
+DB_URL_DEFAULT = "sqlite:///./sign-file.sqlite3"
 
 
 class Settings(BaseSettings):
