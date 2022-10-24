@@ -1,9 +1,9 @@
 from requests import Session
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-import bcrypt
-from .models import Base, User
-from errors import UserNotFoudError
+from sign_file.auth.hash import get_hash
+from sign_file.db.models import Base, User
+from sign_file.errors import UserNotFoudError
 
 DATABASE_URL = 'sqlite:///./sign-file.sqlite3'
 
@@ -28,8 +28,7 @@ def db_drop():
 
 
 def create_user(email: str, password: str):
-    hashed = bcrypt.hashpw(str.encode(password),
-                           bcrypt.gensalt())
+    hashed = get_hash(password)
     u = User(email=email, password=hashed)
     s = get_session()
     s.add(u)
@@ -40,10 +39,8 @@ def create_user(email: str, password: str):
 
 
 def update_password(email: str, password: str):
-    hashed = bcrypt.hashpw(str.encode(password),
-                           bcrypt.gensalt())
+    hashed = get_hash(password)
     session = get_session()
-    session.delete
     row_count = session.query(User).\
         filter(User.email == email).\
         update({'password': hashed})
