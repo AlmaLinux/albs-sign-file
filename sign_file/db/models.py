@@ -1,3 +1,4 @@
+from enum import unique
 from sqlalchemy import Column, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 import databases
@@ -6,8 +7,8 @@ import databases
 Base = declarative_base()
 
 
-class Users(Base):
+class User(Base):
     __tablename__ = "users"
-    user_id = Column(Integer, primary_key=True)
-    email = Column(String)
-    password = Column(String)
+    id = Column(Integer, primary_key=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    password = Column(String, nullable=False)

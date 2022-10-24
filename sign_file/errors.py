@@ -1,0 +1,2 @@
+class UserNotFoudError(Exception):
+    pass
