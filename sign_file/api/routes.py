@@ -1,14 +1,16 @@
-from fastapi import APIRouter, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, HTTPException, status
 from fastapi.responses import PlainTextResponse
-import aiofiles
+from fastapi.security import OAuth2PasswordRequestForm
 from sign_file.config import settings
 from sign_file.pgp.pgp import PGP
-from sign_file.api.schema import JWT_Token, TokenRequest, ErrMessage
+from sign_file.api.schema import Token, TokenRequest, ErrMessage
 from sign_file.db.helpers import get_user
 from sign_file.db.models import User
 from sign_file.auth.jwt import JWT
 from sign_file.auth.hash import hash_valid
 from sign_file.errors import UserNotFoudError
+from sign_file.api.dependencies import get_current_user
+import logging
 
 router = APIRouter()
 
@@ -29,39 +31,32 @@ async def ping():
     return "pong"
 
 
-@router.post('/sign', response_class=PlainTextResponse)
-async def sign(keyid: str, file: UploadFile) -> str:
-    upload_size = 0
-    async with aiofiles.tempfile.NamedTemporaryFile(
-            'wb', delete=False, dir=settings.tmp_dir) as tmp_f:
-        # reading file
-        try:
-            while contents := await file.read(1024 * 1024):
-                upload_size += len(contents)
-                if upload_size > settings.max_upload_bytes:
-                    return {'message': f"upload size exeeds {settings.max_upload_bytes} B"}
-                await tmp_f.write(contents)
-        except Exception as e:
-            return {"message": f"There was an error uploading the file:{e}"}
-        finally:
-            file.file.close()
-        # signing file
-        res = await pgp.sign(
-            keyid, tmp_f.name)
-        return str(res)
+@router.post('/sign', response_class=PlainTextResponse,
+             responses={status.HTTP_400_BAD_REQUEST: {"model": ErrMessage}})
+async def sign(keyid: str,
+               file: UploadFile,
+               user: User = Depends(get_current_user)) -> str:
+    if not pgp.key_exists(keyid):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'key {keyid} does not exists')
+    answer = await pgp.sign(keyid, file)
+    logging.info("user %s has signed file %s with key %s",
+                 user.email, file.filename, keyid)
+    return answer
 
 
-@router.post('/get-token', response_model=JWT_Token,
-             responses={401: {"model": ErrMessage}})
-def get_token(token_request: TokenRequest):
+@router.post('/token', response_model=Token,
+             responses={status.HTTP_401_UNAUTHORIZED: {"model": ErrMessage}})
+async def token(token_request: TokenRequest):
     try:
         user: User = get_user(token_request.email)
     except UserNotFoudError:
-        raise HTTPException(status_code=401)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     if not hash_valid(token_request.password,
                       user.password):
-        raise HTTPException(status_code=401)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     token = jwt.encode(user.id, token_request.email)
     return token

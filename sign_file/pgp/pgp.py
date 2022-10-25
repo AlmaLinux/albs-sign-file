@@ -25,7 +25,7 @@ class PGP():
         return self.__gpg.list_keys()
 
     def key_exists(self, keyid: str) -> bool:
-        return keyid in self.__pass_db.__keys.keys()
+        return keyid in self.__pass_db._PGPPasswordDB__keys.keys()
 
     async def sign(self, keyid: str, file: UploadFile):
         password = self.__pass_db.get_password(keyid)

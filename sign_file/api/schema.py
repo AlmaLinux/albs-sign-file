@@ -8,12 +8,16 @@ class TokenRequest(BaseModel):
     password: str
 
 
-class JWT_Token(BaseModel):
-    user_id: int
-    email: str
+class Token(BaseModel):
     token: str
-    exp: Optional[int] = None
+    user_id: int
+    exp: int
+
+
+class UserSchema(BaseModel):
+    user_id: str
+    email: str
 
 
 class ErrMessage(BaseModel):
-    details: str
+    detail: str
