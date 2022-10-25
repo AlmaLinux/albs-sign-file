@@ -38,6 +38,15 @@ def create_user(email: str, password: str):
     return u_id
 
 
+def get_user(email: str) -> User:
+    session = get_session()
+    user = session.query(User).\
+        filter(User.email == email).first()
+    if not user:
+        raise UserNotFoudError
+    return user
+
+
 def update_password(email: str, password: str):
     hashed = get_hash(password)
     session = get_session()

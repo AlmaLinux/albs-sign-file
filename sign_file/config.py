@@ -1,5 +1,7 @@
 from email.policy import default
+from re import T
 from pydantic import BaseSettings, Field
+from sqlalchemy import desc
 
 GPG_BINARY_DEFAULT = "/usr/bin/gpg2"
 KEYRING_DEFAULT = "/home/alt/.gnupg/pubring.kbx"
@@ -7,8 +9,9 @@ MAX_UPLOAD_BYTES_DEFAULT = 100000000
 PASS_DB_DEV_PASS_DEFAULT = ""
 PASS_DB_DEV_MODE_DEFAULT = False
 TMP_FILE_DIR_DEFAULT = "/tmp"
-PGP_KEYS_ID_DEFAULT = ["EF0F6DF0AFE52FD5", ]
 DB_URL_DEFAULT = "sqlite:///./sign-file.sqlite3"
+JWT_EXPIRE_MINUTES_DEFAULT = 30  # 7 days
+JWT_ALGORITHM_DEFAULT = "HS256"
 
 
 class Settings(BaseSettings):
@@ -28,9 +31,19 @@ class Settings(BaseSettings):
     tmp_dir: str = Field(default=TMP_FILE_DIR_DEFAULT,
                          description="dir to store temp files",
                          env="SF_TMP_FILE_DIR")
-    pgp_keys: list[str] = Field(default=PGP_KEYS_ID_DEFAULT,
-                                description="list of keyIDs to use",
+    pgp_keys: list[str] = Field(description="list of keyIDs to use",
                                 env="SF_PGP_KEYS_ID")
+    jwt_secret_key: str = \
+        Field(description="secret key to use for JWT access token generation",
+              env="SF_JWT_SECRET_KEY")
+    jwt_expire_minutes: int = \
+        Field(default=JWT_EXPIRE_MINUTES_DEFAULT,
+              description="expiration time (in minutes) for JWT access token",
+              env="SF_JWT_EXPIRE_MINUTES")
+    jwt_algoritm: str = \
+        Field(default=JWT_ALGORITHM_DEFAULT,
+              description="hash aloritm to use in JWT",
+              env="SF_JWT_ALGORITHM")
 
     class Config:
         case_sensitive = False

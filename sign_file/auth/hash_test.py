@@ -1,4 +1,4 @@
-from .hash import check_hash, get_hash
+from .hash import hash_valid, get_hash
 
 
 def test_good():
@@ -8,4 +8,4 @@ def test_good():
     """
     test_pass = "veryverrystrong"
     test_hash = get_hash(test_pass)
-    assert check_hash(test_pass, test_hash)
+    assert hash_valid(test_pass, test_hash)

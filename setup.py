@@ -14,6 +14,7 @@ setup(
         'SQLalchemy == 1.4.42',
         'databases == 0.6.1',
         'bcrypt == 4.0.1',
+        'pyjwt == 2.4.0',
     ]
 
 )
