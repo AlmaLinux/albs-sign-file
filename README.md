@@ -208,7 +208,8 @@ This section describes how to install service locally for development and tests
 ### Create configuration file (.env)
 Create .env file with following  config 
 ```bash
-SF_PASS_DB_DEV_PASS="secret"
+# change this according your key password
+SF_PASS_DB_DEV_PASS="<password>"
 SF_PASS_DB_DEV_MODE=True
 # change according your key id
 SF_PGP_KEYS_ID=["03A5E40D1ABD030B"]
