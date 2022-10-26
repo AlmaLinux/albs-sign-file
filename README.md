@@ -23,19 +23,6 @@ https://cloudlinux.atlassian.net/browse/ALBS-681
     ```bash
     (env) python -m pip install .
     ```
-4. Create database and user with `db_manage.py` script
-   ```bash
-    (env) python db_manage.py create
-    command executed succesfully
-
-    (env) python db_manage.py user_add
-    email:kzhukov@cloudlinux.com
-    password:
-    password (repeat):
-    user kzhukov@cloudlinux.com was created (uid: 1)
-    command executed succesfully
-   ```
-
 
 ### Service configuration
 Put in root dir `.env` file with service configuration parameters
@@ -90,6 +77,23 @@ SF_JWT_SECRET_KEY="access-secret"
 SF_DB_URL="sqlite:///./sign-file.sqlite3"
 ```
 
+### Database initialization
+Create database and user with `db_manage.py` script
+   ```bash
+    (env) python db_manage.py create
+    command executed succesfully
+
+    (env) python db_manage.py user_add
+    email:kzhukov@cloudlinux.com
+    password:
+    password (repeat):
+    user kzhukov@cloudlinux.com was created (uid: 1)
+    command executed succesfully
+   ```
+
+
+
+
 ### Service startup
 Start service using `startup.py` script
 
@@ -135,7 +139,8 @@ curl -X 'POST' \
 ## Sign file
 ### Request
 ```bash
-'http://localhost:8000/sign?keyid=EF0F6DF0AFE52FD5' \
+curl -X 'POST' \
+  'http://localhost:8000/sign?keyid=EF0F6DF0AFE52FD5' \
   -H 'accept: text/plain' \
   -H 'token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJlbWFpbCI6Imt6aHVrb3ZAY2xvdWRsaW51eC5jb20iLCJleHAiOjE2NjY3ODI0OTJ9.SdqG6ex_VWtHXzXQXuzIUGnWaKY7HFrrMrwmLVYPwH4' \
   -H 'Content-Type: multipart/form-data' \

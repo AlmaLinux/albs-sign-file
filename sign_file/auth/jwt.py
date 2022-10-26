@@ -16,12 +16,13 @@ class JWT:
 
     def encode(self, user_id: int, email: str) -> Token:
         exp = datetime.now() + timedelta(minutes=self.expire_minutes)
+        exp_timestamp = int(exp.timestamp())
         encoded_token = jwt.encode(
-            {'user_id': user_id, 'email': email, 'exp': exp},
+            {'user_id': user_id, 'email': email, 'exp': exp_timestamp},
             key=self.secret, algorithm=self.hash_algoritm)
         return Token(token=encoded_token,
                      user_id=user_id,
-                     exp=int(exp.timestamp()))
+                     exp=exp_timestamp)
 
     def decode(self, token: str) -> UserSchema:
         decoded_token = jwt.decode(token, self.secret, algorithms=[
