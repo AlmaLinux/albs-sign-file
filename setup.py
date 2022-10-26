@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='albs-sign-file',
+    name='sign',
     version='0.1.0',
-    packages=find_packages(include=['sign_file']),
+    packages=find_packages(include=['sign']),
     install_requires=[
         'python-gnupg == 0.5.0',
         'plumbum == 1.7.2',

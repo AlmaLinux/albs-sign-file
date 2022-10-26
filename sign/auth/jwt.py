@@ -3,8 +3,8 @@ This module responsible for JWT token generation/verification
 """
 from datetime import datetime, timedelta
 import jwt
-from sign_file.api.schema import Token, UserSchema
-from sign_file.db.models import User
+from sign.api.schema import Token, UserSchema
+from sign.db.models import User
 
 
 class JWT:

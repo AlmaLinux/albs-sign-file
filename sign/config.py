@@ -1,5 +1,4 @@
 from email.policy import default
-from re import T
 from pydantic import BaseSettings, Field
 from sqlalchemy import desc
 
@@ -51,6 +50,5 @@ class Settings(BaseSettings):
     class Config:
         case_sensitive = False
         env_file = '.env'
-
 
 settings = Settings()

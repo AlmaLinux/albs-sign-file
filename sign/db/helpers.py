@@ -1,10 +1,10 @@
 from requests import Session
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sign_file.auth.hash import get_hash
-from sign_file.db.models import Base, User
-from sign_file.errors import UserNotFoudError
-from sign_file.config import settings
+from sign.auth.hash import get_hash
+from sign.db.models import Base, User
+from sign.errors import UserNotFoudError
+from sign.config import settings
 
 
 engine = create_engine(

@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Depends, UploadFile, HTTPException, status
 from fastapi.responses import PlainTextResponse
-from sign_file.config import settings
-from sign_file.pgp.pgp import PGP
-from sign_file.api.schema import Token, TokenRequest, ErrMessage
-from sign_file.db.helpers import get_user
-from sign_file.db.models import User
-from sign_file.auth.jwt import JWT
-from sign_file.auth.hash import hash_valid
-from sign_file.errors import UserNotFoudError
-from sign_file.api.dependencies import get_current_user
+from sign.config import settings
+from sign.pgp.pgp import PGP
+from sign.api.schema import Token, TokenRequest, ErrMessage
+from sign.db.helpers import get_user
+from sign.db.models import User
+from sign.auth.jwt import JWT
+from sign.auth.hash import hash_valid
+from sign.errors import UserNotFoudError
+from sign.api.dependencies import get_current_user
 import logging
 
 router = APIRouter()

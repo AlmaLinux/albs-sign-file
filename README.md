@@ -75,6 +75,11 @@ SF_JWT_SECRET_KEY="access-secret"
 # SF_DB_URL - database url
 # default sqlite:///./sign-file.sqlite3
 SF_DB_URL="sqlite:///./sign-file.sqlite3"
+
+# SF_HOST_GNUPG -  path of .gnupg directory on host
+# this variable only used in docker-compose file
+# default ""
+SF_HOST_GNUPG="/home/kzhukov/.gnupg"
 ```
 
 ### Database initialization

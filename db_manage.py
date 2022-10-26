@@ -8,7 +8,7 @@ Database management script
 
 import sys
 import getpass
-from sign_file.db.helpers import (db_create, db_drop, create_user,
+from sign.db.helpers import (db_create, db_drop, create_user,
                                   update_password, delete_user)
 
 
@@ -52,12 +52,20 @@ def user_delete():
     delete_user(email)
 
 
+def dev_init():
+    print('initializing db for development')
+    db_create()
+    print('database created')
+    create_user('test@test.ru', 'test')
+    print('development user was created: login:test@test.ru password:test')
+
 cmds = {
     'create': {'func': db_create, 'descr': 'creates database tables'},
     'drop': {'func': db_drop, 'descr': 'drops database tables'},
     'user_add': {'func': user_add, 'descr': 'creates new user'},
     'user_reset_pass': {'func': user_reset_pass, 'descr': 'update user`s password'},
     'user_delete': {'func': user_delete, 'descr': 'delete user'},
+    'dev_init': {'func': dev_init, 'descr':'creating development database with test user'}
 }
 
 

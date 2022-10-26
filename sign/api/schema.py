@@ -1,6 +1,4 @@
-from ast import Import
 from pydantic import BaseModel
-from typing import Optional
 
 
 class TokenRequest(BaseModel):

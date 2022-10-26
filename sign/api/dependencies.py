@@ -1,10 +1,10 @@
 from fastapi import HTTPException, status, Header
 from typing import Union
-from sign_file.db.models import User
-from sign_file.db.helpers import get_user
-from sign_file.config import settings
-from sign_file.auth.jwt import JWT
-from sign_file.errors import UserNotFoudError
+from sign.db.models import User
+from sign.db.helpers import get_user
+from sign.config import settings
+from sign.auth.jwt import JWT
+from sign.errors import UserNotFoudError
 from jwt.exceptions import PyJWTError
 
 jwt = JWT(secret=settings.jwt_secret_key,

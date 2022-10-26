@@ -1,6 +1,6 @@
 from fastapi import FastAPI
-from sign_file.api.routes import router
-from sign_file.config import settings
+from sign.api.routes import router
+from sign.config import settings
 import logging
 
 logging.basicConfig(

@@ -1,0 +1,13 @@
+version: "3.9"
+services:
+  sign_file:
+    image: sign-file:latest
+    build:
+      dockerfile: Dockerfile
+      context: .
+    command: "/app/env/bin/python /app/start.py"
+    restart: on-failure
+    volumes:
+      - "${SF_HOST_GNUPG}:/home/alt/.gnupg"
+    ports:
+      - "8000:8000"

@@ -1,5 +1,5 @@
 import uvicorn
 
 if __name__ == "__main__":
-    uvicorn.run("sign_file.app:app", host="0.0.0.0", port=8000,
+    uvicorn.run("sign.app:app", host="0.0.0.0", port=8000,
                 reload=False, log_level="debug", debug=True, workers=4)
