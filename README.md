@@ -1,5 +1,5 @@
 # ALBS-SIGN-FILE
-Service for signing various text files using PGP 
+Service for signing various text files using PGP  
 This service created for task 
 https://cloudlinux.atlassian.net/browse/ALBS-681
 
@@ -181,3 +181,62 @@ gpg: Good signature from "key1 (test key) <zklevsha@gmail.com>" [ultimate]
 ```
 
 
+## Development mode
+This section describes how to install service locally for development and tests
+
+### Prerequirements
+  1. gnupgp
+  2. docker + docker-compose
+
+
+### Key generation
+### Create rsa key
+  ```bash
+    gpg --default-new-key-algo rsa4096 --gen-key
+  ```
+### Check rsa keyid (hex value after "pub  rsa4096/")
+  ```bash
+  gpg --list-key --keyid-format long
+  /home/kzhukov/.gnupg/pubring.kbx
+  --------------------------------
+  pub   rsa4096/03A5E40D1ABD030B 2022-10-26 [SC] [expires: 2024-10-25]
+        7AE918401B9F0EF36B7A5E7303A5E40D1ABD030B
+  uid                 [ultimate] Kirill Zhukov <kzhukov@test.ru>
+  ```
+  For the example above keyid is __03A5E40D1ABD030B__
+
+### Create configuration file (.env)
+Create .env file with following  config 
+```bash
+SF_PASS_DB_DEV_PASS="secret"
+SF_PASS_DB_DEV_MODE=True
+# change according your key id
+SF_PGP_KEYS_ID=["03A5E40D1ABD030B"]
+SF_JWT_SECRET_KEY="access-secret"
+# change according your .gnupg location
+SF_HOST_GNUPG="/home/<some_user>/.gnupg"
+```
+
+### Start service with docker-compose
+```bash
+sudo docker-compose up
+[+] Running 2/2
+ ⠿ Network albs-sign-file_default        Created                           0.7s
+ ⠿ Container albs-sign-file-sign_file-1  Created                           0.1s
+Attaching to albs-sign-file-sign_file-1
+albs-sign-file-sign_file-1  | initializing db for development
+albs-sign-file-sign_file-1  | database created
+albs-sign-file-sign_file-1  | development user was created: login:test@test.ru password:test
+albs-sign-file-sign_file-1  | command executed succesfully
+albs-sign-file-sign_file-1  | INFO:     Will watch for changes in these directories: ['/app']
+albs-sign-file-sign_file-1  | INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+albs-sign-file-sign_file-1  | INFO:     Started reloader process [1] using watchgod
+albs-sign-file-sign_file-1  | INFO:     Started server process [8]
+albs-sign-file-sign_file-1  | [2022-10-26 23:21:29,762] INFO - Started server process [8]
+albs-sign-file-sign_file-1  | INFO:     Waiting for application startup.
+albs-sign-file-sign_file-1  | [2022-10-26 23:21:29,764] INFO - Waiting for application startup.
+albs-sign-file-sign_file-1  | INFO:     Application startup complete.
+albs-sign-file-sign_file-1  | [2022-10-26 23:21:29,764] INFO - Application startup complete.
+```
+
+After startup service will be available at http://hostip:8000 (make sure that 8000 port is open). Also there is a test user created: `login:test@test.ru password:test`

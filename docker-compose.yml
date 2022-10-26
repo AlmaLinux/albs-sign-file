@@ -5,9 +5,12 @@ services:
     build:
       dockerfile: Dockerfile
       context: .
-    command: "/app/env/bin/python /app/start.py"
+    command: >  
+      bash -c "/app/env/bin/python /app/db_manage.py dev_init 
+      && /app/env/bin/python /app/start.py"
     restart: on-failure
     volumes:
       - "${SF_HOST_GNUPG}:/home/alt/.gnupg"
+      - ./sign:/app/sign
     ports:
       - "8000:8000"

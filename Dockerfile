@@ -17,12 +17,10 @@ RUN echo 'wheel ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 WORKDIR /app
 RUN virtualenv -p python3.9 env
 COPY setup.py /app/setup.py
-COPY sign /app/sign
-RUN /app/env/bin/pip install /app/.
 COPY start.py /app/start.py
 COPY .env /app/
 COPY db_manage.py /app
-RUN /app/env/bin/python /app/db_manage.py dev_init
+RUN /app/env/bin/pip install -e /app/.
 
 RUN chown -R alt:alt /app
 USER alt
