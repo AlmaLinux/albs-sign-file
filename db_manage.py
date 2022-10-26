@@ -8,8 +8,8 @@ Database management script
 
 import sys
 import getpass
-from db.helpers import (db_create, db_drop, create_user,
-                        update_password, delete_user)
+from sign_file.db.helpers import (db_create, db_drop, create_user,
+                                  update_password, delete_user)
 
 
 def print_and_exit(msg: str, exit_code: int = 0):

@@ -4,11 +4,11 @@ from sqlalchemy.orm import sessionmaker
 from sign_file.auth.hash import get_hash
 from sign_file.db.models import Base, User
 from sign_file.errors import UserNotFoudError
+from sign_file.config import settings
 
-DATABASE_URL = 'sqlite:///./sign-file.sqlite3'
 
 engine = create_engine(
-    DATABASE_URL, connect_args={"check_same_thread": False}
+    settings.db_url, connect_args={"check_same_thread": False}
 )
 
 

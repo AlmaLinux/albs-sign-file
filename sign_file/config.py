@@ -33,6 +33,9 @@ class Settings(BaseSettings):
                          env="SF_TMP_FILE_DIR")
     pgp_keys: list[str] = Field(description="list of keyIDs to use",
                                 env="SF_PGP_KEYS_ID")
+    db_url: str = \
+        Field(default=DB_URL_DEFAULT, description="database url",
+              env="SF_DB_URL")
     jwt_secret_key: str = \
         Field(description="secret key to use for JWT access token generation",
               env="SF_JWT_SECRET_KEY")

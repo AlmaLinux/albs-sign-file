@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, UploadFile, HTTPException, status
 from fastapi.responses import PlainTextResponse
-from fastapi.security import OAuth2PasswordRequestForm
 from sign_file.config import settings
 from sign_file.pgp.pgp import PGP
 from sign_file.api.schema import Token, TokenRequest, ErrMessage
