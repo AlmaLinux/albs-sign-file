@@ -32,10 +32,10 @@ class PGP():
     async def sign(self, keyid: str, file: UploadFile):
         password = self.__pass_db.get_password(keyid)
         async with aiofiles.tempfile.NamedTemporaryFile(
-                'w', delete=True, dir=self.tmp_dir) as fd:
+                'wb', delete=True, dir=self.tmp_dir) as fd:
             # writing content to temp file
             content = await file.read()
-            await fd.write(content.decode(encoding="utf-8"))
+            await fd.write(content)
             await fd.flush()
 
             # signing tmp file with gpg binary
