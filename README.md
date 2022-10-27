@@ -29,8 +29,8 @@ Put in root dir `.env` file with service configuration parameters
 EXAMPLE
 ```bash
 # SF_GPG_BINARY - path to gpg binary
-# default /ust/bin/gpg2
-SF_GPG_BINARY="/ust/bin/gpg2"
+# default /usr/bin/gpg2
+SF_GPG_BINARY="/usr/bin/gpg2"
 
 # SF_KEYRING - path to keyring kbx file
 # default /home/alt/.gnupg/pubring.kbx
@@ -43,7 +43,7 @@ SF_MAX_UPLOAD_BYTES=100000000
 # SF_PASS_DB_DEV_PASS
 # password for PGP private key (DO NOT USE IT IN PROD)
 # default ""
-SF_PASS_DB_DEV_PASS= "secret2"
+SF_PASS_DB_DEV_PASS="secret2"
 
 # SF_PASS_DB_DEV_MODE - if True PGP key password
 # will be retrived from SF_PASS_DB_DEV_PASS 
