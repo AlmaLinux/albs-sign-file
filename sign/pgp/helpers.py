@@ -6,7 +6,6 @@
 """CloudLinux Build System PGP related utility functions."""
 
 import datetime
-import gnupg
 import plumbum
 
 

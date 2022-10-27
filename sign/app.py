@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from sign.api.routes import router
-from sign.config import settings
 import logging
 
 logging.basicConfig(

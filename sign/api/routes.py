@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, UploadFile, HTTPException, status
 from fastapi.responses import PlainTextResponse
 from sign.config import settings
 from sign.pgp.pgp import PGP
-from sign.api.schema import Token, TokenRequest, ErrMessage
+from sign.api.schema import  TokenRequest, TokenResponse, ErrMessage
 from sign.db.helpers import get_user
 from sign.db.models import User
 from sign.auth.jwt import JWT
@@ -45,7 +45,7 @@ async def sign(keyid: str,
     return answer
 
 
-@router.post('/token', response_model=Token,
+@router.post('/token', response_model=TokenResponse,
              responses={status.HTTP_401_UNAUTHORIZED: {"model": ErrMessage}})
 async def token(token_request: TokenRequest):
     try:

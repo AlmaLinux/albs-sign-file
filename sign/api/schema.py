@@ -6,7 +6,7 @@ class TokenRequest(BaseModel):
     password: str
 
 
-class Token(BaseModel):
+class TokenResponse(BaseModel):
     token: str
     user_id: int
     exp: int

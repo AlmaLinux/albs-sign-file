@@ -1,10 +1,8 @@
 FROM almalinux:8
 
-RUN curl https://packages.codenotary.org/codenotary.repo -o /etc/yum.repos.d/codenotary.repo
-
 RUN dnf install -y epel-release && \
     dnf upgrade -y && \
-    dnf install -y --enablerepo="powertools" --enablerepo="epel" --enablerepo="codenotary-repo" \
+    dnf install -y --enablerepo="powertools" --enablerepo="epel" \
         python39 python39-devel python3-virtualenv python39-setuptools pinentry gnupg2  && \
     dnf clean all
 
@@ -16,9 +14,9 @@ RUN echo 'wheel ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 WORKDIR /app
 RUN virtualenv -p python3.9 env
-COPY setup.py /app/setup.py
-COPY start.py /app/start.py
-COPY .env /app/
+COPY setup.py /app
+COPY start.py /app
+COPY .env /app
 COPY db_manage.py /app
 RUN /app/env/bin/pip install -e /app/.
 

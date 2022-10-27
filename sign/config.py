@@ -1,6 +1,4 @@
-from email.policy import default
 from pydantic import BaseSettings, Field
-from sqlalchemy import desc
 
 GPG_BINARY_DEFAULT = "/usr/bin/gpg2"
 KEYRING_DEFAULT = "/home/alt/.gnupg/pubring.kbx"
