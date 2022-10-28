@@ -1,7 +1,7 @@
 import getpass
 import gnupg
-from .errors import ConfigurationError
-from .helpers import verify_pgp_key_password
+from sign.pgp.errors import ConfigurationError
+from sign.pgp.helpers import verify_pgp_key_password
 
 
 class PGPPasswordDB(object):

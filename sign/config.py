@@ -20,7 +20,7 @@ class Settings(BaseSettings):
                          env="SF_KEYRING")
     max_upload_bytes = Field(default=MAX_UPLOAD_BYTES_DEFAULT,
                              description="max size in bytes for file to sign",
-                             env="SF_SMAX_UPLOAD_BYTES")
+                             env="SF_MAX_UPLOAD_BYTES")
     pass_db_dev_mode: bool = Field(default=PASS_DB_DEV_MODE_DEFAULT,
                                    env="SF_PASS_DB_DEV_MODE")
     pass_db_dev_pass: str = Field(default=PASS_DB_DEV_PASS_DEFAULT,

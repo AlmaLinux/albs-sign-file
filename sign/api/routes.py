@@ -7,7 +7,7 @@ from sign.db.helpers import get_user
 from sign.db.models import User
 from sign.auth.jwt import JWT
 from sign.auth.hash import hash_valid
-from sign.errors import UserNotFoudError
+from sign.errors import UserNotFoudError, FileToBigError
 from sign.api.dependencies import get_current_user
 import logging
 
@@ -17,7 +17,8 @@ pgp = PGP(keyring=settings.keyring,
           gpg_binary=settings.gpg_binary,
           pgp_keys=settings.pgp_keys,
           pass_db_dev_mode=settings.pass_db_dev_mode,
-          pass_db_dev_pass=settings.pass_db_dev_pass)
+          pass_db_dev_pass=settings.pass_db_dev_pass,
+          max_upload_bytes=settings.max_upload_bytes)
 
 
 jwt = JWT(secret=settings.jwt_secret_key,
@@ -39,7 +40,13 @@ async def sign(keyid: str,
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f'key {keyid} does not exists')
-    answer = await pgp.sign(keyid, file)
+    try:
+        answer = await pgp.sign(keyid, file)
+    except FileToBigError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'file size exeeds {settings.max_upload_bytes} bytes'
+        )
     logging.info("user %s has signed file %s with key %s",
                  user.email, file.filename, keyid)
     return answer

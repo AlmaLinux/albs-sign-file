@@ -1,17 +1,20 @@
 import aiofiles
 from aiofiles.os import remove
 from fastapi import UploadFile
+import gnupg
 import logging
 import plumbum
 import pexpect
-from .pgp_password_db import PGPPasswordDB
-import gnupg
+from sign.pgp.pgp_password_db import PGPPasswordDB
+from sign.errors import FileToBigError
+
 
 
 class PGP():
     def __init__(self,
                  keyring: str, gpg_binary: str,
                  pgp_keys: list[str],
+                 max_upload_bytes: int,
                  pass_db_dev_mode: bool = False,
                  pass_db_dev_pass: str = None,
                  tmp_dir: str = '/tmp'):
@@ -20,6 +23,7 @@ class PGP():
         self.__pass_db = PGPPasswordDB(
             self.__gpg, pgp_keys,
             pass_db_dev_mode, pass_db_dev_pass)
+        self.max_upload_bytes = max_upload_bytes
         self.tmp_dir = tmp_dir
         self.__pass_db.ask_for_passwords()
 
@@ -30,16 +34,21 @@ class PGP():
         return keyid in self.__pass_db._PGPPasswordDB__keys.keys()
 
     async def sign(self, keyid: str, file: UploadFile):
-        password = self.__pass_db.get_password(keyid)
+        upload_size = 0
         async with aiofiles.tempfile.NamedTemporaryFile(
                 'wb', delete=True, dir=self.tmp_dir) as fd:
             # writing content to temp file
-            content = await file.read()
-            await fd.write(content)
-            await fd.flush()
-
+            while content := await file.read(1024 * 1024):
+                upload_size += len(content)
+                if upload_size > self.max_upload_bytes:
+                    raise FileToBigError
+                await fd.write(content)
+                await fd.flush()
+            file.file.close()
+                
             # signing tmp file with gpg binary
             # using pgp.sign_file() will result in wrong signature
+            password = self.__pass_db.get_password(keyid)
             sign_cmd = plumbum.local[self.__gpg.gpgbinary][
                 '--yes', '--detach-sign', '--armor',
                 '--default-key', keyid, fd.name

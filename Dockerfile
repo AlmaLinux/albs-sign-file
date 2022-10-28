@@ -16,9 +16,9 @@ WORKDIR /app
 RUN virtualenv -p python3.9 env
 COPY setup.py /app
 COPY start.py /app
+RUN /app/env/bin/pip install -e /app/.
 COPY .env /app
 COPY db_manage.py /app
-RUN /app/env/bin/pip install -e /app/.
 
 RUN chown -R alt:alt /app
 USER alt
