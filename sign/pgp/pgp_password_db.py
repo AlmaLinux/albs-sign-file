@@ -1,7 +1,7 @@
 import getpass
 import gnupg
-from .errors import ConfigurationError
-from .helpers import verify_pgp_key_password
+from sign.pgp.errors import ConfigurationError
+from sign.pgp.helpers import verify_pgp_key_password
 
 
 class PGPPasswordDB(object):
@@ -44,8 +44,8 @@ class PGPPasswordDB(object):
             key = existent_keys.get(keyid)
             if not key:
                 raise ConfigurationError(
-                    "PGP key {0} is not found in the " "gnupg2 "
-                    "database".format(keyid)
+                    "PGP key {0} is not found in the gnupg2 database "
+                    "available keys {1}".format(keyid, str(existent_keys.keys()))
                 )
             if self.__development_mode:
                 password = self.__development_password

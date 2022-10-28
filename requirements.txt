@@ -1,3 +1,0 @@
-python-gnupg==0.4.8
-plumbum==1.7.2
-pexpect==4.8.0
