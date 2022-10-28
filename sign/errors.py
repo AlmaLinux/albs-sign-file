@@ -1,5 +1,5 @@
-class UserNotFoudError(Exception):
+class UserNotFoundError(Exception):
     pass
 
-class FileToBigError(Exception):
+class FileTooBigError(Exception):
     pass

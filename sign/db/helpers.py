@@ -3,7 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sign.auth.hash import get_hash
 from sign.db.models import Base, User
-from sign.errors import UserNotFoudError
+from sign.errors import UserNotFoundError
 from sign.config import settings
 
 
@@ -43,7 +43,7 @@ def get_user(email: str) -> User:
     user = session.query(User).\
         filter(User.email == email).first()
     if not user:
-        raise UserNotFoudError
+        raise UserNotFoundError
     return user
 
 
@@ -54,7 +54,7 @@ def update_password(email: str, password: str):
         filter(User.email == email).\
         update({'password': hashed})
     if row_count == 0:
-        raise UserNotFoudError
+        raise UserNotFoundError
     session.commit()
     session.close()
 
@@ -65,6 +65,6 @@ def delete_user(email: str):
         filter(User.email == email).\
         delete()
     if row_count == 0:
-        raise UserNotFoudError
+        raise UserNotFoundError
     session.commit()
     session.close()

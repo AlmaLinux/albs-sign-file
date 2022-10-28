@@ -7,7 +7,7 @@ from sign.db.helpers import get_user
 from sign.db.models import User
 from sign.auth.jwt import JWT
 from sign.auth.hash import hash_valid
-from sign.errors import UserNotFoudError, FileToBigError
+from sign.errors import UserNotFoundError, FileTooBigError
 from sign.api.dependencies import get_current_user
 import logging
 
@@ -42,7 +42,7 @@ async def sign(keyid: str,
             detail=f'key {keyid} does not exists')
     try:
         answer = await pgp.sign(keyid, file)
-    except FileToBigError:
+    except FileTooBigError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f'file size exeeds {settings.max_upload_bytes} bytes'
@@ -57,7 +57,7 @@ async def sign(keyid: str,
 async def token(token_request: TokenRequest):
     try:
         user: User = get_user(token_request.email)
-    except UserNotFoudError:
+    except UserNotFoundError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     if not hash_valid(token_request.password,

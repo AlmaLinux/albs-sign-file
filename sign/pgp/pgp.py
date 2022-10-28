@@ -6,7 +6,7 @@ import logging
 import plumbum
 import pexpect
 from sign.pgp.pgp_password_db import PGPPasswordDB
-from sign.errors import FileToBigError
+from sign.errors import FileTooBigError
 
 
 
@@ -41,7 +41,7 @@ class PGP():
             while content := await file.read(1024 * 1024):
                 upload_size += len(content)
                 if upload_size > self.max_upload_bytes:
-                    raise FileToBigError
+                    raise FileTooBigError
                 await fd.write(content)
                 await fd.flush()
             file.file.close()
