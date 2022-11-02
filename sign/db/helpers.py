@@ -1,6 +1,5 @@
-from requests import Session
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from sign.auth.hash import get_hash
 from sign.db.models import Base, User
 from sign.errors import UserNotFoundError
