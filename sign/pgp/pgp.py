@@ -9,8 +9,7 @@ from sign.pgp.pgp_password_db import PGPPasswordDB
 from sign.errors import FileTooBigError
 
 
-
-class PGP():
+class PGP:
     def __init__(self,
                  keyring: str, gpg_binary: str,
                  pgp_keys: list[str],
@@ -33,7 +32,12 @@ class PGP():
     def key_exists(self, keyid: str) -> bool:
         return keyid in self.__pass_db._PGPPasswordDB__keys.keys()
 
-    async def sign(self, keyid: str, file: UploadFile):
+    async def sign(
+            self,
+            keyid: str,
+            file: UploadFile,
+            detach_sign: bool = True,
+    ):
         upload_size = 0
         async with aiofiles.tempfile.NamedTemporaryFile(
                 'wb', delete=True, dir=self.tmp_dir) as fd:
@@ -50,8 +54,8 @@ class PGP():
             # using pgp.sign_file() will result in wrong signature
             password = self.__pass_db.get_password(keyid)
             sign_cmd = plumbum.local[self.__gpg.gpgbinary][
-                '--yes', '--detach-sign', '--armor',
-                '--default-key', keyid, fd.name
+                '--yes', '--detach-sign' if detach_sign else '--clear-sign',
+                '--armor', '--default-key', keyid, fd.name
             ]
             out, status = pexpect.run(
                 command=' '.join(sign_cmd.formulate()),
