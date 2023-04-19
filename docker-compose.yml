@@ -1,6 +1,8 @@
 version: "3.9"
 services:
   sign_file:
+    env_file:
+      - .env
     image: sign-file:latest
     build:
       dockerfile: Dockerfile

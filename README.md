@@ -141,7 +141,7 @@ curl -X 'POST' \
 {"token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJlbWFpbCI6Imt6aHVrb3ZAY2xvdWRsaW51eC5jb20iLCJleHAiOjE2NjY3ODI0OTJ9.SdqG6ex_VWtHXzXQXuzIUGnWaKY7HFrrMrwmLVYPwH4","user_id":1,"exp":1666775292}
 ```
 
-## Sign file
+## Sign file with detached signature
 ### Request
 ```bash
 curl -X 'POST' \
@@ -168,6 +168,41 @@ TYCmN3QiFJqnINGs/gpFVB8WK5jWb8t2gc9tiRVVQ/gGnIzJtBVMd++NafZNxbpG
 kqqSe4lK32Q2eVxMKgDojhE7l9S4oBWoaKPV0twacIXcJYVlfJ5eEFWX3neJf3Cg
 JLI3A3hL2JnhxPgIw2uoKbgZ6xhU59K+LzX+tzxmvzUeBFYg0+Y=
 =NfH2
+-----END PGP SIGNATURE-----
+```
+
+## Sign file with clear signature
+### Request
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/sign?keyid=EF0F6DF0AFE52FD5&sign_type=clear-sign' \
+  -H 'accept: text/plain' \
+  -H 'token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJlbWFpbCI6Imt6aHVrb3ZAY2xvdWRsaW51eC5jb20iLCJleHAiOjE2NjY3ODI0OTJ9.SdqG6ex_VWtHXzXQXuzIUGnWaKY7HFrrMrwmLVYPwH4' \
+  -H 'Content-Type: multipart/form-data' \
+  -F 'file=@test;type=text/plain'
+```
+### Response
+```bash
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA256
+
+line1
+line2
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCAAdFiEENuDOMZ0vGM8wTisq/bHGsUxl8KwFAmQ+/KwACgkQ/bHGsUxl
+8Kx09hAAj/pIvQcRlTgvq1b53wiHz02wkqVW/BLGzeLY3/DU2ilSHPUWKLoaciZ8
+QDgWcowtAKIn6O6APWK3MJvnvUw0KitLYiuP+0OibKAWEbvaBtzbOOXDB8AfRMZS
+hImsb9fFfONpnq/xO+149kwtNZOFzShuKyHHKfhm+117qjKVScvGXdD//GT31UN0
+qnwBnkHFZq+gojDgzSTQai3/DkNbJdvv9s1bhwjVuRfk8wPpAWNbvuSt/74sUjgf
++1711KxNHt/FZReRSpS6ZFdziMrnCsHdFTyDiN33Np7vUF+0Y+d6rcT9K9DwRvep
+9jGhfDNzuPnevWFTWk6lj7BO4r2C81nObHKAkMDNGeSFpXFOA6k8DGjZZEloY3WI
+NRwL/nXbexso0afpAYKrC51W7VWb4SoIGoHPP19dtQ+yzZlblbxH+7nOwIXWBl5B
+D5IBHATpSCoz3IlidhrM6KfgDrIe+vL/1QhNGMTY3DL+uxaa0f4L9mCne98e6zxV
+Ta3NteGiLbP76aLxE8H2zVj5D8Xt00RGoZ9OpZ2BmBY0maBPBPG2an7llHwxU0SY
+zE5NAiSJ18XMkeLiwkO7tG3BOoqxQsegJOrT5YZjSfkDC/+QXLegpdvN0RNXlXAn
+fiqWYJ3GstPN3kEySzdxmfmkzFj2J0GilFAyYogq+SasFh2lLZQ=
+=9qdc
 -----END PGP SIGNATURE-----
 ```
 

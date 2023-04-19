@@ -35,13 +35,18 @@ async def ping():
              responses={status.HTTP_400_BAD_REQUEST: {"model": ErrMessage}})
 async def sign(keyid: str,
                file: UploadFile,
+               sign_type: str = 'detach-sign',
                user: User = Depends(get_current_user)) -> str:
     if not pgp.key_exists(keyid):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f'key {keyid} does not exists')
     try:
-        answer = await pgp.sign(keyid, file)
+        answer = await pgp.sign(
+            keyid,
+            file,
+            detach_sign=sign_type == 'detach-sign',
+        )
     except FileTooBigError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
