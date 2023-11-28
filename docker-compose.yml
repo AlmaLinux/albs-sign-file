@@ -14,5 +14,7 @@ services:
     volumes:
       - "${SF_HOST_GNUPG}:/home/alt/.gnupg"
       - ./sign:/app/sign
+      - ./start.py:/app/start.py
+      - ./db_manage.py:/app/db_manage.py
     ports:
       - "8000:8000"

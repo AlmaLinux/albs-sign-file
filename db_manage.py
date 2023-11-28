@@ -8,8 +8,13 @@ Database management script
 
 import sys
 import getpass
-from sign.db.helpers import (db_create, db_drop, create_user,
-                                  update_password, delete_user)
+from sign.db.helpers import (db_create, db_drop,
+                            create_user,update_password,
+                            delete_user, user_exists)
+
+
+DEV_USER_EMAIL = 'test@test.ru'
+DEV_USER_PASSWORD = 'test'
 
 
 def print_and_exit(msg: str, exit_code: int = 0):
@@ -55,9 +60,9 @@ def user_delete():
 def dev_init():
     print('initializing db for development')
     db_create()
-    print('database created')
-    create_user('test@test.ru', 'test')
-    print('development user was created: login:test@test.ru password:test')
+    if not user_exists(DEV_USER_EMAIL):
+        create_user('test@test.ru', 'test')
+        print('development user was created: login:test@test.ru password:test')
 
 cmds = {
     'create': {'func': db_create, 'descr': 'creates database tables'},
