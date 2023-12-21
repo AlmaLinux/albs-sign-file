@@ -54,8 +54,12 @@ class PGP:
             # using pgp.sign_file() will result in wrong signature
             password = self.__pass_db.get_password(keyid)
             sign_cmd = plumbum.local[self.__gpg.gpgbinary][
-                '--yes', '--detach-sign' if detach_sign else '--clear-sign',
-                '--armor', '--default-key', keyid, fd.name
+                '--yes', 
+                '--pinentry-mode', 'loopback',
+                '--detach-sign' if detach_sign else '--clear-sign',
+                '--armor', 
+                '--default-key', keyid, 
+                fd.name
             ]
             out, status = pexpect.run(
                 command=' '.join(sign_cmd.formulate()),
