@@ -37,6 +37,13 @@ def create_user(email: str, password: str):
     return u_id
 
 
+def user_exists(email: str) -> bool:
+    session = get_session()
+    if session.query(User).\
+        filter(User.email == email).first():
+        return True
+    return False
+
 def get_user(email: str) -> User:
     session = get_session()
     user = session.query(User).\

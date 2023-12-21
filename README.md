@@ -1,7 +1,5 @@
 # ALBS-SIGN-FILE
 Service for signing various text files using PGP  
-This service created for task 
-https://cloudlinux.atlassian.net/browse/ALBS-681
 
 ## Installation
 
@@ -34,7 +32,7 @@ SF_GPG_BINARY="/usr/bin/gpg2"
 
 # SF_KEYRING - path to keyring kbx file
 # default /home/alt/.gnupg/pubring.kbx
-SF_KEYRING="/Users/alt/.gnupg/pubring.kbx"
+SF_KEYRING="/home/alt/.gnupg/pubring.kbx"
 
 # SF_MAX_UPLOAD_BYTES - max file size (in bytes )to sign
 # default 100000000
@@ -63,7 +61,6 @@ SF_PGP_KEYS_ID=["EF0F6DF0AFE52FD5", "0673DB399D3E2894"]
 # default 30
 SF_JWT_EXPIRE_MINUTES=30
 
-
 # SF_JWT_ALGORITHM - hashing algoritm used for JWT token creation
 # defaul HS256
 SF_JWT_ALGORITHM="HS256"
@@ -80,6 +77,15 @@ SF_DB_URL="sqlite:///./sign-file.sqlite3"
 # this variable only used in docker-compose file
 # default ""
 SF_HOST_GNUPG="/home/kzhukov/.gnupg"
+
+# SF_ROOT_URL root URL for API calls
+# default ""
+# NOTE:
+# You need to specify this parameter only if
+# you`re planning to deploy service behind the proxy
+# (see below)
+SF_ROOT_URL=""
+
 ```
 
 ### Database initialization
@@ -95,8 +101,6 @@ Create database and user with `db_manage.py` script
     user kzhukov@cloudlinux.com was created (uid: 1)
     command executed succesfully
    ```
-
-
 
 
 ### Service startup
@@ -147,7 +151,7 @@ curl -X 'POST' \
 curl -X 'POST' \
   'http://localhost:8000/sign?keyid=EF0F6DF0AFE52FD5' \
   -H 'accept: text/plain' \
-  -H 'token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJlbWFpbCI6Imt6aHVrb3ZAY2xvdWRsaW51eC5jb20iLCJleHAiOjE2NjY3ODI0OTJ9.SdqG6ex_VWtHXzXQXuzIUGnWaKY7HFrrMrwmLVYPwH4' \
+  -H 'Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJlbWFpbCI6Imt6aHVrb3ZAY2xvdWRsaW51eC5jb20iLCJleHAiOjE2NjY3ODI0OTJ9.SdqG6ex_VWtHXzXQXuzIUGnWaKY7HFrrMrwmLVYPwH4' \
   -H 'Content-Type: multipart/form-data' \
   -F 'file=@README.md;type=text/plain'
 ```
@@ -171,13 +175,53 @@ JLI3A3hL2JnhxPgIw2uoKbgZ6xhU59K+LzX+tzxmvzUeBFYg0+Y=
 -----END PGP SIGNATURE-----
 ```
 
+### Python example
+```python
+import requests
+from urllib.parse import urljoin
+
+EMAIL = 'test@test.ru'
+PASSWORD = 'test'
+BASE_URL = 'http://localhost:8000'
+PATH_TO_FILE = '/tmp/test.txt'
+KEYID = '' # SET IT YOURSELF
+
+
+def get_token(email: str = EMAIL, password: str = PASSWORD) -> str:
+    endpoint = '/token'
+    full_url = urljoin(BASE_URL, endpoint)
+    body = {'email': email, 'password': password}
+    response = requests.post(url=full_url, json=body)
+    response.raise_for_status()
+    return response.json()['token']
+
+
+def sign_file(path_to_file: str = PATH_TO_FILE, 
+              keyid: str  = KEYID):
+    headers = {'Authorization': f"Bearer {get_token()}"}
+    endpoint = '/sign'
+    full_url = urljoin(BASE_URL, endpoint)
+    params = {'keyid': keyid}
+    files = {'file': open(path_to_file,'rb')}
+
+    response = requests.post(url=full_url, headers=headers,
+                             files=files, params=params)
+    response.raise_for_status()
+
+    return response.text
+
+
+if __name__ == '__main__':
+    print(sign_file())
+```
+
 ## Sign file with clear signature
 ### Request
 ```bash
 curl -X 'POST' \
   'http://localhost:8000/sign?keyid=EF0F6DF0AFE52FD5&sign_type=clear-sign' \
   -H 'accept: text/plain' \
-  -H 'token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJlbWFpbCI6Imt6aHVrb3ZAY2xvdWRsaW51eC5jb20iLCJleHAiOjE2NjY3ODI0OTJ9.SdqG6ex_VWtHXzXQXuzIUGnWaKY7HFrrMrwmLVYPwH4' \
+  -H 'Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJlbWFpbCI6Imt6aHVrb3ZAY2xvdWRsaW51eC5jb20iLCJleHAiOjE2NjY3ODI0OTJ9.SdqG6ex_VWtHXzXQXuzIUGnWaKY7HFrrMrwmLVYPwH4' \
   -H 'Content-Type: multipart/form-data' \
   -F 'file=@test;type=text/plain'
 ```
@@ -276,3 +320,27 @@ albs-sign-file-sign_file-1  | [2022-10-26 23:21:29,764] INFO - Application start
 ```
 
 After startup service will be available at http://hostip:8000 (make sure that 8000 port is open). Also there is a test user created: `login:test@test.ru password:test`
+
+
+# Deploy service behind the Nginx
+
+1. Set `SF_ROOT_URL` in .env file to the prefix you like to serve service from
+    ```
+    SF_ROOT_URL="/sign-file"
+    ```
+  
+2. Add location to Nginx config
+    ```
+    upstream signfile {
+      server <ip:port>;
+    }
+
+    server {
+      [... other configs ...]
+
+      location /sign-file/ {
+          proxy_set_header Host $http_host;
+        proxy_pass http://signfile/;
+      }
+    }
+    ```

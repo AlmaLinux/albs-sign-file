@@ -6,19 +6,18 @@ RUN dnf install -y epel-release && \
         python39 python39-devel python3-virtualenv python39-setuptools pinentry gnupg2  && \
     dnf clean all
 
-RUN useradd -ms /bin/bash alt
-RUN usermod -aG wheel alt
-RUN echo 'alt ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-RUN echo 'wheel ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+RUN groupadd -g 1000 alt && \
+    useradd -ms /bin/bash -u 1000 -g 1000 alt && \
+    usermod -aG wheel alt && \
+    echo 'alt ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
+    echo 'wheel ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 
 WORKDIR /app
 RUN virtualenv -p python3.9 env
 COPY setup.py /app
-COPY start.py /app
 RUN /app/env/bin/pip install -e /app/.
-COPY .env /app
-COPY db_manage.py /app
 
 RUN chown -R alt:alt /app
 USER alt

@@ -9,7 +9,7 @@ TMP_FILE_DIR_DEFAULT = "/tmp"
 DB_URL_DEFAULT = "sqlite:///./sign-file.sqlite3"
 JWT_EXPIRE_MINUTES_DEFAULT = 30
 JWT_ALGORITHM_DEFAULT = "HS256"
-
+ROOT_URL_DEFAULT = ''
 
 class Settings(BaseSettings):
     gpg_binary: str = Field(default=GPG_BINARY_DEFAULT,
@@ -44,6 +44,10 @@ class Settings(BaseSettings):
         Field(default=JWT_ALGORITHM_DEFAULT,
               description="hash aloritm to use in JWT",
               env="SF_JWT_ALGORITHM")
+    root_url: str = \
+        Field(default= ROOT_URL_DEFAULT,
+              description="root url for api calls",
+              env="SF_ROOT_URL")
 
     class Config:
         case_sensitive = False
