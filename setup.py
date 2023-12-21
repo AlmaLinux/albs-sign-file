@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='sign',
-    version='0.1.0',
+    version='0.1.1',
     packages=find_packages(include=['sign']),
     install_requires=[
         'python-gnupg == 0.5.0',
