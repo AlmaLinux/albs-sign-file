@@ -1,0 +1,48 @@
+name: Run Tests
+on:
+  push:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.9
+          cache: pip
+          cache-dependency-path: setup.py
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Install Pytest
+        run: pip install pytest pytest-cov
+
+      - name: Run Pytest
+        run: pytest -v --cov --cov-report=term | tee pytest-report.txt
+
+      - name: Publish Job Summary
+        if: always()
+        run: |
+          {
+            printf "## Test Results\n\n"
+            printf '<details><summary>Click to expand</summary>\n'
+            printf '\n```\n'
+            awk 'NR == 1 {next}; /^-+ coverage:/ {exit}; {print}' pytest-report.txt
+            printf '\n```\n'
+            printf '</details>\n\n'
+
+            printf "## Code Coverage\n\n"
+            printf '<details><summary>Click to expand</summary>\n'
+            printf '\n```\n'
+            awk '/^-+ coverage:/, /^TOTAL/' pytest-report.txt
+            printf '\n```\n'
+            printf '</details>\n\n'
+          } > $GITHUB_STEP_SUMMARY
