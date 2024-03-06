@@ -1,0 +1,96 @@
+name: Preflight
+on:
+  pull_request:
+    branches: ["**"]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.9
+          cache: pip
+          cache-dependency-path: setup.py
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Install Pytest
+        run: pip install pytest pytest-cov
+
+      - name: Run Pytest
+        run:
+          pytest -v --junit-xml=pytest-report.xml
+                --cov --cov-report=xml:pytest-coverage.xml
+                --cov-report=term | tee pytest-report.txt
+
+      - name: Generate Test Summary
+        # https://github.com/marketplace/actions/junit-test-dashboard
+        if: always()
+        uses: test-summary/action@v2
+        with:
+          paths: pytest-report.xml
+          output: test-summary.md
+
+      - name: Generate Coverage Summary
+        # https://github.com/marketplace/actions/code-coverage-summary
+        if: always()
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: pytest-coverage.xml
+          badge: false
+          hide_branch_rate: true
+          hide_complexity: true
+          indicators: false
+          format: markdown
+          output: file
+
+      - name: Generate Preflight Summary
+        if: always()
+        run: |
+          {
+            JOB_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            printf "[%s]($JOB_URL \"Go to Job Summary\")\n\n" "$(< test-summary.md)"
+            printf "**Code Coverage Summary**\n\n"
+            cat code-coverage-results.md
+            printf "\nView full reports on the [Job Summary]($JOB_URL \"Go to Job Summary\") page\n"
+          } > preflight-report.md
+
+      - name: Comment PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: gh pr comment $PR_NUMBER --body-file preflight-report.md
+
+      - name: Publish Job Summary
+        if: always()
+        run: |
+          {
+            printf "## Test Results\n\n"
+            printf '<details><summary>Click to expand</summary>\n'
+            printf '\n```\n'
+            awk 'NR == 1 {next}; /^-+ generated xml file:/ {exit}; {print}' pytest-report.txt
+            printf '\n```\n'
+            printf '</details>\n\n'
+
+            printf "## Code Coverage\n\n"
+            printf '<details><summary>Click to expand</summary>\n'
+            printf '\n```\n'
+            awk '/^-+ coverage:/, /^TOTAL/' pytest-report.txt
+            printf '\n```\n'
+            printf '</details>\n\n'
+          } > $GITHUB_STEP_SUMMARY
