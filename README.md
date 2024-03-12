@@ -1,4 +1,9 @@
 # ALBS-SIGN-FILE
+
+<picture>
+  <img alt="Test Coverage" src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/andrewlukoshko/afe47ca11d7b469e40efab6eaede1cce/raw/coverage-badge.json">
+</picture>
+
 Service for signing various text files using PGP  
 
 ## Installation
