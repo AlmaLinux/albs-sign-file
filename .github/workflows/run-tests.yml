@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
 
   pytest:
@@ -27,10 +31,31 @@ jobs:
         run: pip install pytest pytest-cov
 
       - name: Run Pytest
-        run: pytest -v --cov --cov-report=term | tee pytest-report.txt
+        id: pytest
+        run: |
+          pytest -v --cov \
+                --cov-report=json:pytest-report.json \
+                --cov-report=term | tee pytest-report.txt || true
+          python -c "
+          import os, json
+          coverage = json.load(open('pytest-report.json'))['totals']['percent_covered_display']
+          print(f'percent_covered={coverage}', file=open(os.environ['GITHUB_OUTPUT'], 'a'))"
+
+      - name: Create Coverage Badge
+        # https://github.com/marketplace/actions/dynamic-badges
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+           auth: ${{ secrets.GIST_TOKEN }}
+           gistID: afe47ca11d7b469e40efab6eaede1cce
+           filename: coverage-badge.json
+           label: Test Coverage
+           message: ${{ steps.pytest.outputs.percent_covered }}%
+           valColorRange: ${{ steps.pytest.outputs.percent_covered }}
+           minColorRange: 30
+           maxColorRange: 60
+           namedLogo: pytest
 
       - name: Publish Job Summary
-        if: always()
         run: |
           {
             printf "## Test Results\n\n"
