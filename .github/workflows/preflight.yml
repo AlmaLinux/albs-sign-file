@@ -76,24 +76,19 @@ jobs:
           name: preflight-reports
           path: ${{ env.REPORTS_DIR }}
           compression-level: 9
-          retention-days: 1
 
       - name: Publish Job Summary
         run: |
           {
-            printf "## Test Results\n\n"
-            printf '<details><summary>Click to expand</summary>\n'
+            printf "<details><summary>Coverage report</summary>\n"
             printf '\n```\n'
-            awk 'NR == 1 {next}; /^-+ generated xml file:/ {exit}; {print}' \
-              $REPORTS_DIR/pytest-report.txt
+            awk '/^-+ coverage:/, /^TOTAL/' $REPORTS_DIR/pytest-report.txt
             printf '\n```\n'
             printf '</details>\n\n'
 
-            printf "## Code Coverage\n\n"
-            printf '<details><summary>Click to expand</summary>\n'
+            printf '<details><summary>Pytest report</summary>\n'
             printf '\n```\n'
-            awk '/^-+ coverage:/, /^TOTAL/' \
-              $REPORTS_DIR/pytest-report.txt
+            awk 'NR == 1 {next}; /^-+ coverage:/ {exit}; {print}' $REPORTS_DIR/pytest-report.txt
             printf '\n```\n'
             printf '</details>\n\n'
           } > $GITHUB_STEP_SUMMARY

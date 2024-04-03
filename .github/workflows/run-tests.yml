@@ -12,6 +12,8 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      REPORTS_DIR: .reports
     steps:
 
       - name: Check out repository
@@ -30,16 +32,20 @@ jobs:
       - name: Install Pytest
         run: pip install pytest pytest-cov
 
+      - name: Prepare working directory
+        run: mkdir -p $REPORTS_DIR
+
       - name: Run Pytest
         id: pytest
         run: |
           pytest -v --cov \
-                --cov-report=json:pytest-report.json \
-                --cov-report=term | tee pytest-report.txt || true
+            --cov-report=json:$REPORTS_DIR/pytest-report.json \
+            --cov-report=term | tee $REPORTS_DIR/pytest-report.txt || true
+
           python -c "
-          import os, json
-          coverage = json.load(open('pytest-report.json'))['totals']['percent_covered_display']
-          print(f'percent_covered={coverage}', file=open(os.environ['GITHUB_OUTPUT'], 'a'))"
+          import json
+          coverage = json.load(open('$REPORTS_DIR/pytest-report.json'))['totals']['percent_covered_display']
+          print(f'percent_covered={coverage}', file=open('$GITHUB_OUTPUT', 'a'))"
 
       - name: Create Coverage Badge
         # https://github.com/marketplace/actions/dynamic-badges
@@ -51,24 +57,22 @@ jobs:
            label: Test Coverage
            message: ${{ steps.pytest.outputs.percent_covered }}%
            valColorRange: ${{ steps.pytest.outputs.percent_covered }}
-           minColorRange: 30
+           minColorRange: 25
            maxColorRange: 60
            namedLogo: pytest
 
       - name: Publish Job Summary
         run: |
           {
-            printf "## Test Results\n\n"
-            printf '<details><summary>Click to expand</summary>\n'
+            printf "<details><summary>Coverage report</summary>\n"
             printf '\n```\n'
-            awk 'NR == 1 {next}; /^-+ coverage:/ {exit}; {print}' pytest-report.txt
+            awk '/^-+ coverage:/, /^TOTAL/' $REPORTS_DIR/pytest-report.txt
             printf '\n```\n'
             printf '</details>\n\n'
 
-            printf "## Code Coverage\n\n"
-            printf '<details><summary>Click to expand</summary>\n'
+            printf '<details><summary>Pytest report</summary>\n'
             printf '\n```\n'
-            awk '/^-+ coverage:/, /^TOTAL/' pytest-report.txt
+            awk 'NR == 1 {next}; /^-+ coverage:/ {exit}; {print}' $REPORTS_DIR/pytest-report.txt
             printf '\n```\n'
             printf '</details>\n\n'
           } > $GITHUB_STEP_SUMMARY
