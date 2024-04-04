@@ -1,7 +1,9 @@
+import os
+
 from pydantic import BaseSettings, Field
 
 GPG_BINARY_DEFAULT = "/usr/bin/gpg2"
-KEYRING_DEFAULT = "/home/alt/.gnupg/pubring.kbx"
+KEYRING_DEFAULT = os.path.abspath(os.path.expanduser("~/.gnupg/pubring.kbx"))
 MAX_UPLOAD_BYTES_DEFAULT = 100000000
 PASS_DB_DEV_PASS_DEFAULT = ""
 PASS_DB_DEV_MODE_DEFAULT = False
