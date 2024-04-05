@@ -12,20 +12,20 @@ Service for signing various text files using PGP
 ### Prerequirements
 1. GnuPGP binary
 2. At least one private RSA key in PGP database
-3. Python3.9 with virtualenv
+3. Python 3.9
 
 ### Install service
 1. Create virtual enviroment
     ```bash
-    virtualenv -p python3.9 env
+    python3 -m venv .venv
     ```
 2. Activate virtualenv
     ```bash
-    source env/bin/activate
+    source .venv/bin/activate
     ```
 3. Install service with pip
     ```bash
-    (env) python -m pip install .
+    (.venv) pip3 install .
     ```
 
 ### Service configuration
@@ -37,8 +37,8 @@ EXAMPLE
 SF_GPG_BINARY="/usr/bin/gpg2"
 
 # SF_KEYRING - path to keyring kbx file
-# default /home/alt/.gnupg/pubring.kbx
-SF_KEYRING="/home/alt/.gnupg/pubring.kbx"
+# default ~/.gnupg/pubring.kbx
+SF_KEYRING="~/.gnupg/pubring.kbx"
 
 # SF_MAX_UPLOAD_BYTES - max file size (in bytes )to sign
 # default 100000000
@@ -82,7 +82,7 @@ SF_DB_URL="sqlite:///./sign-file.sqlite3"
 # SF_HOST_GNUPG -  path of .gnupg directory on host
 # this variable only used in docker-compose file
 # default ""
-SF_HOST_GNUPG="/home/kzhukov/.gnupg"
+SF_HOST_GNUPG="~/.gnupg"
 
 # SF_ROOT_URL root URL for API calls
 # default ""
@@ -97,10 +97,10 @@ SF_ROOT_URL=""
 ### Database initialization
 Create database and user with `db_manage.py` script
    ```bash
-    (env) python db_manage.py create
+    (.venv) python3 db_manage.py create
     command executed succesfully
 
-    (env) python db_manage.py user_add
+    (.venv) python3 db_manage.py user_add
     email:kzhukov@cloudlinux.com
     password:
     password (repeat):
@@ -113,7 +113,7 @@ Create database and user with `db_manage.py` script
 Start service using `startup.py` script
 
 ```bash
-(env) % python start.py
+(.venv) % python3 start.py
 INFO:     Will watch for changes in these directories: ['/Users/kzhukov/projects/cloudlinux/albs-sign-file']
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 DEBUG:    WatchGodReload detected a new excluded dir '.pytest_cache' in '/Users/kzhukov/projects/cloudlinux/albs-sign-file'; Adding to exclude list.

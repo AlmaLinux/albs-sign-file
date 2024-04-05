@@ -53,7 +53,13 @@ jobs:
             printf "\n\n### Code Coverage Summary\n"
             cat code-coverage-results.md
             JOB_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${{ github.event.workflow_run.id }}"
-            printf "\nView full reports on the [Job Summary]($JOB_URL \"Go to Job Summary\") page\n"
+            printf "\nView full reports on the [Job Summary]($JOB_URL \"Go to Job Summary\") page\n\n"
+
+            cat {pylint,black,isort,bandit}-report.md > linter-reports.md 2>/dev/null || true
+            if [[ -s linter-reports.md ]]; then
+              printf "### Linter reports\n"
+              cat linter-reports.md
+            fi
           } > preflight-report.md
 
       - name: Comment PR
