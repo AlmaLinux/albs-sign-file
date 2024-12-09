@@ -12,6 +12,7 @@ DB_URL_DEFAULT = "sqlite:///./sign-file.sqlite3"
 JWT_EXPIRE_MINUTES_DEFAULT = 30
 JWT_ALGORITHM_DEFAULT = "HS256"
 ROOT_URL_DEFAULT = ''
+SERVICE_DEFAULT='albs-sign-service'
 
 class Settings(BaseSettings):
     gpg_binary: str = Field(default=GPG_BINARY_DEFAULT,
@@ -50,6 +51,10 @@ class Settings(BaseSettings):
         Field(default= ROOT_URL_DEFAULT,
               description="root url for api calls",
               env="SF_ROOT_URL")
+    service: str = \
+        Field(default=SERVICE_DEFAULT,
+              description="name of the service that will use sign-file",
+              env="TARGET_SERVICE")
 
     class Config:
         case_sensitive = False

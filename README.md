@@ -92,6 +92,10 @@ SF_HOST_GNUPG="~/.gnupg"
 # (see below)
 SF_ROOT_URL=""
 
+# The service that will use sign-file
+# default "albs-sign-service"
+TARGET_SERVICE="albs-sign-service"
+
 ```
 
 ### Database initialization
@@ -110,7 +114,7 @@ Create database and user with `db_manage.py` script
 
 
 ### Service startup
-Start service using `startup.py` script
+Start service using `start.py` script
 
 ```bash
 (.venv) % python3 start.py

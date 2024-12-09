@@ -1,3 +1,4 @@
+import os
 import aiofiles
 from aiofiles.os import remove
 from fastapi import UploadFile
@@ -5,8 +6,12 @@ import gnupg
 import logging
 import plumbum
 import pexpect
+
+from sign.config import settings
+from sign.log import SysLog
 from sign.pgp.pgp_password_db import PGPPasswordDB
 from sign.errors import FileTooBigError
+from sign.utils.hashing import get_hasher, hash_file
 
 
 class PGP:
@@ -25,6 +30,7 @@ class PGP:
         self.max_upload_bytes = max_upload_bytes
         self.tmp_dir = tmp_dir
         self.__pass_db.ask_for_passwords()
+        self.__syslog = SysLog(tag_name=settings.service)
 
     def list_keys(self):
         return self.__gpg.list_keys()
@@ -49,7 +55,12 @@ class PGP:
                 await fd.write(content)
                 await fd.flush()
             file.file.close()
-                
+
+            hash_before = hash_file(
+                fd.name,
+                hasher=get_hasher('sha256'),
+            )
+
             # signing tmp file with gpg binary
             # using pgp.sign_file() will result in wrong signature
             password = self.__pass_db.get_password(keyid)
@@ -67,6 +78,18 @@ class PGP:
                 env={"LC_ALL": "en_US.UTF-8"},
                 timeout=1200,
                 withexitstatus=1,
+            )
+            hash_after = hash_file(
+                fd.name,
+                hasher=get_hasher('sha256'),
+            )
+
+            # it would be nice if we could know the platform too
+            self.__syslog.sign_log(
+                os.path.basename(fd.name),
+                hash_before,
+                hash_after,
+                keyid,
             )
             if status != 0:
                 message = f'gpg failed to sign file, error: {out}'
