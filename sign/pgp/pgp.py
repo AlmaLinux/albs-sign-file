@@ -58,7 +58,7 @@ class PGP:
 
             hash_before = hash_file(
                 fd.name,
-                hasher=get_hasher('sha256'),
+                hasher=get_hasher(),
             )
 
             # signing tmp file with gpg binary
@@ -81,7 +81,7 @@ class PGP:
             )
             hash_after = hash_file(
                 fd.name,
-                hasher=get_hasher('sha256'),
+                hasher=get_hasher(),
             )
 
             # it would be nice if we could know the platform too
