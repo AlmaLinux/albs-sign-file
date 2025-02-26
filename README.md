@@ -96,6 +96,14 @@ SF_ROOT_URL=""
 # default "albs-sign-service"
 TARGET_SERVICE="albs-sign-service"
 
+# Sentry related vars
+# SF_SENTRY_DSN to send server data to Sentry
+SF_SENTRY_DSN = ""
+# SF_SENTRY_TRACES_SAMPLE_RATE to specify percent of captured transactions for tracing (from 0.0 to 1.0)
+SENTRY_TRACES_SAMPLE_RATE = 0.2
+# SF_SENTRY_ENV for filtering purposes
+SENTRY_ENV = "dev"
+
 ```
 
 ### Database initialization
