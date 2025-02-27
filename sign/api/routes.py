@@ -33,10 +33,13 @@ async def ping():
 
 @router.post('/sign', response_class=PlainTextResponse,
              responses={status.HTTP_400_BAD_REQUEST: {"model": ErrMessage}})
-async def sign(keyid: str,
-               file: UploadFile,
-               sign_type: str = 'detach-sign',
-               user: User = Depends(get_current_user)) -> str:
+async def sign(
+    keyid: str,
+    file: UploadFile,
+    sign_type: str = 'detach-sign',
+    sign_algo: str = 'SHA256',
+    user: User = Depends(get_current_user),
+) -> str:
     if not pgp.key_exists(keyid):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -46,6 +49,7 @@ async def sign(keyid: str,
             keyid,
             file,
             detach_sign=sign_type == 'detach-sign',
+            digest_algo=sign_algo,
         )
     except FileTooBigError:
         raise HTTPException(
