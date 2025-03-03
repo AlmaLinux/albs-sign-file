@@ -15,5 +15,6 @@ setup(
         'databases == 0.6.1',
         'bcrypt == 4.0.1',
         'pyjwt == 2.4.0',
+        'sentry-sdk == 2.22.0',
     ]
 )
