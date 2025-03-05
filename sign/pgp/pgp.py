@@ -39,10 +39,11 @@ class PGP:
         return keyid in self.__pass_db._PGPPasswordDB__keys.keys()
 
     async def sign(
-            self,
-            keyid: str,
-            file: UploadFile,
-            detach_sign: bool = True,
+        self,
+        keyid: str,
+        file: UploadFile,
+        detach_sign: bool = True,
+        digest_algo: str = 'SHA256',
     ):
         upload_size = 0
         async with aiofiles.tempfile.NamedTemporaryFile(
@@ -65,11 +66,12 @@ class PGP:
             # using pgp.sign_file() will result in wrong signature
             password = self.__pass_db.get_password(keyid)
             sign_cmd = plumbum.local[self.__gpg.gpgbinary][
-                '--yes', 
+                '--yes',
                 '--pinentry-mode', 'loopback',
+                '--digest-algo', digest_algo,
                 '--detach-sign' if detach_sign else '--clear-sign',
-                '--armor', 
-                '--default-key', keyid, 
+                '--armor',
+                '--default-key', keyid,
                 fd.name
             ]
             out, status = pexpect.run(
