@@ -1,7 +1,7 @@
 pytest==8.1.1
 pytest-cov==5.0.0
 pyfakefs==5.3.5
-
+sentry_sdk==2.20.0
 # Linters
 isort[colors]==5.13.2
 black==24.3.0
