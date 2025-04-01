@@ -10,8 +10,10 @@ import pexpect
 from sign.config import settings
 from sign.log import SysLog
 from sign.pgp.pgp_password_db import PGPPasswordDB
+from sign.pgp.helpers import restart_gpg_agent
 from sign.errors import FileTooBigError
 from sign.utils.hashing import get_hasher, hash_file
+from sign.utils.locking import exclusive_lock
 
 
 class PGP:
@@ -72,13 +74,15 @@ class PGP:
                 '--default-key', keyid, 
                 fd.name
             ]
-            out, status = pexpect.run(
-                command=' '.join(sign_cmd.formulate()),
-                events={"Enter passphrase:.*": "{0}\r".format(password)},
-                env={"LC_ALL": "en_US.UTF-8"},
-                timeout=1200,
-                withexitstatus=1,
-            )
+            with exclusive_lock(settings.GPG_LOCKS_DIR, keyid):
+                out, status = pexpect.run(
+                    command=' '.join(sign_cmd.formulate()),
+                    events={"Enter passphrase:.*": "{0}\r".format(password)},
+                    env={"LC_ALL": "en_US.UTF-8"},
+                    timeout=1200,
+                    withexitstatus=1,
+                )
+                restart_gpg_agent()
             hash_after = hash_file(
                 fd.name,
                 hasher=get_hasher(),

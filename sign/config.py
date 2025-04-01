@@ -16,6 +16,7 @@ SERVICE_DEFAULT = 'albs-sign-service'
 SENTRY_DSN = ''
 SENTRY_TRACES_SAMPLE_RATE = 0.2
 SENTRY_ENV = 'dev'
+GPG_LOCKS_DIR = '/tmp/gpg_locks'
 
 class Settings(BaseSettings):
     gpg_binary: str = Field(default=GPG_BINARY_DEFAULT,
@@ -70,6 +71,10 @@ class Settings(BaseSettings):
         Field(default=SENTRY_ENV,
               description="filtering tag",
               env="SF_SENTRY_ENV")
+    gpg_locks_dir: str = \
+         Field(default=GPG_LOCKS_DIR,
+               description="directory to store locks for gpg",
+               env="SF_GPG_LOCKS_DIR")
 
     class Config:
         case_sensitive = False
