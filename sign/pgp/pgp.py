@@ -76,7 +76,7 @@ class PGP:
                 '--default-key', keyid,
                 fd.name
             ]
-            with exclusive_lock(settings.GPG_LOCKS_DIR, keyid):
+            with exclusive_lock(settings.gpg_locks_dir, keyid):
                 out, status = pexpect.run(
                     command=' '.join(sign_cmd.formulate()),
                     events={"Enter passphrase:.*": "{0}\r".format(password)},
