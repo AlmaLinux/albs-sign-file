@@ -12,7 +12,7 @@ setup(
         'aiofiles == 22.1.0',
         'pexpect == 4.8.0',
         'SQLalchemy == 1.4.42',
-        'databases == 0.6.1',
+        'databases == 0.9.0',
         'bcrypt == 4.0.1',
         'pyjwt == 2.4.0',
         'sentry-sdk == 2.22.0',
