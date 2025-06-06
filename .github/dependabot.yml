@@ -1,0 +1,6 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"  # directory containing setup.py
+    schedule:
+      interval: "daily"
