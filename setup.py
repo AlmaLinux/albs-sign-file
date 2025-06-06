@@ -5,7 +5,7 @@ setup(
     version='0.1.0',
     packages=find_packages(include=['sign']),
     install_requires=[
-        'python-gnupg == 0.5.0',
+        'python-gnupg == 0.5.4',
         'plumbum == 1.7.2',
         'fastapi[all] == 0.75.0',
         'fastapi-users[all] == 10.1.1',
