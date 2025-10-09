@@ -7,7 +7,7 @@ setup(
     install_requires=[
         'python-gnupg == 0.5.0',
         'plumbum == 1.7.2',
-        'fastapi[all] == 0.75.0',
+        'fastapi[all] == 0.118.2',
         'fastapi-users[all] == 10.1.1',
         'aiofiles == 22.1.0',
         'pexpect == 4.8.0',
