@@ -1,0 +1,15 @@
+Generic single-database configuration with Alembic.
+
+This directory contains Alembic migrations for the sign-file database.
+
+To create a new migration after modifying models:
+    python3 db_manage.py migrate_revision
+
+To apply migrations:
+    python3 db_manage.py migrate_upgrade
+
+To rollback the last migration:
+    python3 db_manage.py migrate_downgrade
+
+To view migration history:
+    python3 db_manage.py migrate_history

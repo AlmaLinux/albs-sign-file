@@ -1,4 +1,20 @@
 services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: signfile
+      POSTGRES_USER: signfile
+      POSTGRES_PASSWORD: signfile
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signfile"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   sign_file:
     image: sign-file:latest
     build:
@@ -17,6 +33,9 @@ services:
       - ".:/app"
     ports:
       - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   sign_file_tests:
     image: sign-file-tests:latest
@@ -25,3 +44,6 @@ services:
       target: sign-file-tests
     volumes:
       - ".:/app"
+
+volumes:
+  postgres_data:

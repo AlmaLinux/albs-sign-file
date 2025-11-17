@@ -77,7 +77,24 @@ SF_JWT_SECRET_KEY="access-secret"
 
 # SF_DB_URL - database url
 # default sqlite:///./sign-file.sqlite3
+# For SQLite (default):
 SF_DB_URL="sqlite:///./sign-file.sqlite3"
+# For PostgreSQL:
+# SF_DB_URL="postgresql://signfile:signfile@localhost:5432/signfile"
+# For PostgreSQL in docker-compose:
+# SF_DB_URL="postgresql://signfile:signfile@postgres:5432/signfile"
+
+# PostgreSQL Connection Pool Settings (optional, only for PostgreSQL)
+# SF_DB_POOL_SIZE - number of connections to keep in the pool (default: 5)
+# SF_DB_POOL_SIZE=5
+# SF_DB_MAX_OVERFLOW - max connections beyond pool_size (default: 10)
+# SF_DB_MAX_OVERFLOW=10
+# SF_DB_POOL_RECYCLE - recycle connections after N seconds (default: 3600)
+# SF_DB_POOL_RECYCLE=3600
+# SF_DB_POOL_PRE_PING - verify connections before use (default: true)
+# SF_DB_POOL_PRE_PING=true
+# SF_DB_ECHO - enable SQL query logging for debugging (default: false)
+# SF_DB_ECHO=false
 
 # SF_HOST_GNUPG -  path of .gnupg directory on host
 # this variable only used in docker-compose file
@@ -107,18 +124,160 @@ SENTRY_ENV = "dev"
 ```
 
 ### Database initialization
-Create database and user with `db_manage.py` script
+
+#### Database Configuration
+The service supports both SQLite and PostgreSQL databases:
+
+**SQLite (Default)**
+- Good for: Development, testing, simple deployments
+- Configuration: `SF_DB_URL="sqlite:///./sign-file.sqlite3"`
+- No additional setup required
+
+**PostgreSQL (Recommended for Production)**
+- Good for: Production deployments, concurrent access, better performance
+- Configuration: `SF_DB_URL="postgresql://user:password@host:port/dbname"`
+- Requires: Running PostgreSQL server
+- Example: `SF_DB_URL="postgresql://signfile:signfile@localhost:5432/signfile"`
+- Driver: Uses **psycopg2-binary** (reliable, battle-tested PostgreSQL adapter)
+
+**PostgreSQL Optimizations:**
+
+The service includes advanced connection pooling for PostgreSQL:
+
+- **Connection Pooling**: Maintains a pool of reusable database connections
+  - `SF_DB_POOL_SIZE=5`: Number of connections to keep open (default: 5)
+  - `SF_DB_MAX_OVERFLOW=10`: Additional connections during traffic spikes (default: 10)
+  
+- **Connection Health**: 
+  - `SF_DB_POOL_PRE_PING=true`: Validates connections before use (prevents stale connections)
+  - `SF_DB_POOL_RECYCLE=3600`: Recycles connections after 1 hour (prevents timeout issues)
+  
+- **Monitoring**: 
+  - `SF_DB_ECHO=false`: Enable SQL logging for debugging (set to `true` in development)
+  - Connection pool statistics available via `get_pool_stats()` helper
+  
+- **Connection Settings**:
+  - Connection timeout: 10 seconds
+  - Pool timeout: 30 seconds
+  - Application name: Identifies connections in PostgreSQL's `pg_stat_activity`
+
+#### Creating Database and User
+
+**Using Alembic Migrations (Recommended)**
+
+Alembic provides version control for your database schema. This is the recommended approach:
+
+1. Run migrations to create database tables:
+   ```bash
+   (.venv) python3 db_manage.py migrate_init
+   Running database migrations...
+   Migrations completed successfully
+   command executed succesfully
+   ```
+
+2. Create a user:
+   ```bash
+   (.venv) python3 db_manage.py user_add
+   email:kzhukov@cloudlinux.com
+   password:
+   password (repeat):
+   user kzhukov@cloudlinux.com was created (uid: 1)
+   command executed succesfully
+   ```
+
+**Additional Migration Commands:**
+- `migrate_revision` - Create a new migration (with autogenerate)
+- `migrate_upgrade` - Upgrade to the latest database version
+- `migrate_downgrade` - Downgrade database by one version
+- `migrate_history` - Show migration history
+
+**Database Monitoring:**
+- `pool_stats` - Show connection pool statistics (PostgreSQL only)
+
+Example:
+```bash
+(.venv) python3 db_manage.py pool_stats
+Database Connection Pool Statistics:
+{
+  "pool_size": 5,
+  "checked_in": 4,
+  "checked_out": 1,
+  "overflow": 0,
+  "total_connections": 5
+}
+command executed succesfully
+```
+
+**Legacy Method (Direct Table Creation)**
+
+You can still use the direct table creation method:
    ```bash
     (.venv) python3 db_manage.py create
     command executed succesfully
-
-    (.venv) python3 db_manage.py user_add
-    email:kzhukov@cloudlinux.com
-    password:
-    password (repeat):
-    user kzhukov@cloudlinux.com was created (uid: 1)
-    command executed succesfully
    ```
+
+However, this method doesn't provide version control and is deprecated in favor of Alembic migrations.
+
+
+### Database Migrations with Alembic
+
+The project uses Alembic for database schema version control. This allows you to:
+- Track changes to your database schema over time
+- Upgrade/downgrade between different schema versions
+- Automatically generate migrations from model changes
+
+#### Working with Migrations
+
+**Creating a New Migration**
+
+When you modify the database models in `sign/db/models.py`, create a new migration:
+
+```bash
+(.venv) python3 db_manage.py migrate_revision
+Migration message: add new field to user table
+Migration 'add new field to user table' created successfully
+command executed succesfully
+```
+
+Alembic will automatically detect changes in your models and generate the migration file.
+
+**Applying Migrations**
+
+To apply all pending migrations:
+
+```bash
+(.venv) python3 db_manage.py migrate_upgrade
+Upgrading database...
+Database upgraded successfully
+command executed succesfully
+```
+
+**Rolling Back Migrations**
+
+To roll back the last migration:
+
+```bash
+(.venv) python3 db_manage.py migrate_downgrade
+Downgrading database...
+Database downgraded successfully
+command executed succesfully
+```
+
+**Viewing Migration History**
+
+To see the current migration status:
+
+```bash
+(.venv) python3 db_manage.py migrate_history
+```
+
+#### Migration Files
+
+Migration files are located in the `alembic/versions/` directory. Each file contains:
+- `upgrade()` function - applies the migration
+- `downgrade()` function - reverts the migration
+
+You can edit these files manually if needed, but be careful to maintain consistency.
 
 
 ### Service startup
@@ -313,17 +472,28 @@ SF_PGP_KEYS_ID=["03A5E40D1ABD030B"]
 SF_JWT_SECRET_KEY="access-secret"
 # change according your .gnupg location
 SF_HOST_GNUPG="/home/<some_user>/.gnupg"
+
+# Database configuration
+# For PostgreSQL (recommended for production):
+SF_DB_URL="postgresql://signfile:signfile@postgres:5432/signfile"
+# For SQLite (simpler for local development):
+# SF_DB_URL="sqlite:///./sign-file.sqlite3"
 ```
 
 ### Start service with docker-compose
 ```bash
 sudo docker-compose up
-[+] Running 2/2
+[+] Running 3/3
  ⠿ Network albs-sign-file_default        Created                           0.7s
+ ⠿ Container albs-sign-file-postgres-1   Created                           0.2s
  ⠿ Container albs-sign-file-sign_file-1  Created                           0.1s
 Attaching to albs-sign-file-sign_file-1
 albs-sign-file-sign_file-1  | initializing db for development
-albs-sign-file-sign_file-1  | database created
+albs-sign-file-sign_file-1  | Running database migrations...
+albs-sign-file-sign_file-1  | INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+albs-sign-file-sign_file-1  | INFO  [alembic.runtime.migration] Will assume transactional DDL.
+albs-sign-file-sign_file-1  | INFO  [alembic.runtime.migration] Running upgrade  -> 001, Initial migration
+albs-sign-file-sign_file-1  | Migrations completed
 albs-sign-file-sign_file-1  | development user was created: login:test@test.ru password:test
 albs-sign-file-sign_file-1  | command executed succesfully
 albs-sign-file-sign_file-1  | INFO:     Will watch for changes in these directories: ['/app']
@@ -338,6 +508,8 @@ albs-sign-file-sign_file-1  | [2022-10-26 23:21:29,764] INFO - Application start
 ```
 
 After startup service will be available at http://hostip:8000 (make sure that 8000 port is open). Also there is a test user created: `login:test@test.ru password:test`
+
+**Note:** By default, docker-compose now includes a PostgreSQL service. If you prefer to use SQLite, modify the `SF_DB_URL` in your `.env` file and remove the `depends_on` section from `docker-compose.yml`.
 
 
 # Deploy service behind the Nginx

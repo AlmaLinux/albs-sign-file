@@ -1,4 +1,4 @@
-FROM almalinux/9-base:latest as sign-file
+FROM almalinux/9-base:latest AS sign-file
 
 RUN <<EOT
   set -ex
@@ -17,7 +17,7 @@ RUN <<EOT
 EOT
 
 
-FROM sign-file as sign-file-tests
+FROM sign-file AS sign-file-tests
 
 COPY requirements-tests.txt .
 RUN <<EOT
