@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 setup(
     name='sign',
@@ -16,5 +16,7 @@ setup(
         'bcrypt == 4.0.1',
         'pyjwt == 2.4.0',
         'sentry-sdk == 2.22.0',
-    ]
+        'psycopg2-binary >= 2.9.3, < 3.0',
+        'alembic == 1.13.1',
+    ],
 )
