@@ -2,7 +2,7 @@ import re
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from sign.auth.hash import get_hash
 from sign.config import settings
@@ -53,29 +53,41 @@ def create_database_engine():
 engine = create_database_engine()
 
 
-def get_session() -> Session:
-    """Get a new database session"""
-    return sessionmaker(bind=engine, expire_on_commit=False)()
+@contextmanager
+def get_session():
+    """
+    Get a new database session as a context manager.
+
+    Usage:
+        with get_session() as session:
+            user = session.query(User).first()
+
+    The session will be automatically closed when exiting the context.
+    """
+    session = sessionmaker(bind=engine, expire_on_commit=False)()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 @contextmanager
 def session_scope():
     """
     Provide a transactional scope around a series of operations.
+    Automatically commits on success and rolls back on error.
 
     Usage:
         with session_scope() as session:
             session.query(User).all()
     """
-    session = get_session()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+    with get_session() as session:
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
 
 
 def get_pool_stats() -> dict:
@@ -122,47 +134,46 @@ def db_drop():
 def create_user(email: str, password: str):
     hashed = get_hash(password)
     u = User(email=email, password=hashed)
-    s = get_session()
-    s.add(u)
-    s.commit()
-    u_id = u.id
-    s.close()
-    return u_id
+    with get_session() as s:
+        s.add(u)
+        s.commit()
+        u_id = u.id
+        return u_id
 
 
 def user_exists(email: str) -> bool:
-    session = get_session()
-    if session.query(User).filter(User.email == email).first():
-        return True
-    return False
+    with get_session() as session:
+        if session.query(User).filter(User.email == email).first():
+            return True
+        return False
 
 
 def get_user(email: str) -> User:
-    session = get_session()
-    user = session.query(User).filter(User.email == email).first()
-    if not user:
-        raise UserNotFoundError
-    return user
+    with get_session() as session:
+        user = session.query(User).filter(User.email == email).first()
+        if not user:
+            raise UserNotFoundError
+        # Expunge the user from the session so it can be used after session closes
+        session.expunge(user)
+        return user
 
 
 def update_password(email: str, password: str):
     hashed = get_hash(password)
-    session = get_session()
-    row_count = (
-        session.query(User)
-        .filter(User.email == email)
-        .update({'password': hashed})
-    )
-    if row_count == 0:
-        raise UserNotFoundError
-    session.commit()
-    session.close()
+    with get_session() as session:
+        row_count = (
+            session.query(User)
+            .filter(User.email == email)
+            .update({'password': hashed})
+        )
+        if row_count == 0:
+            raise UserNotFoundError
+        session.commit()
 
 
 def delete_user(email: str):
-    session = get_session()
-    row_count = session.query(User).filter(User.email == email).delete()
-    if row_count == 0:
-        raise UserNotFoundError
-    session.commit()
-    session.close()
+    with get_session() as session:
+        row_count = session.query(User).filter(User.email == email).delete()
+        if row_count == 0:
+            raise UserNotFoundError
+        session.commit()
