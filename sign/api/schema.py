@@ -1,3 +1,5 @@
+from typing import List, Optional
+
 from pydantic import BaseModel
 
 
@@ -19,3 +21,21 @@ class UserSchema(BaseModel):
 
 class ErrMessage(BaseModel):
     detail: str
+
+
+class BatchSignRequest(BaseModel):
+    keyid: str
+    sign_type: str = 'detach-sign'
+    sign_algo: str = 'SHA256'
+
+
+class FileSignResult(BaseModel):
+    filename: str
+    success: bool
+    signature: Optional[str] = None
+
+
+class BatchSignResponse(BaseModel):
+    results: List[FileSignResult]
+    total: int
+    successful: int
