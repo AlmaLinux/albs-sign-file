@@ -302,6 +302,12 @@ INFO:     Application startup complete.
 # API Reference
 SWAGGER API documentaion available at /docs enpoint
 
+## Batch Signing Endpoint
+
+The service includes a `/sign-batch` endpoint for signing multiple files in a single request. Files are processed asynchronously with I/O operations parallelized. The implementation uses exclusive locks for cross-process protection and semaphores for safe GPG agent restarts within each process.
+
+**Note:** The endpoint uses fail-fast behavior - if any file fails to sign, the entire batch operation fails immediately.
+
 # Basic usage
 
 ## Get access token 

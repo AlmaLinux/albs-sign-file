@@ -1,15 +1,24 @@
-from fastapi import APIRouter, Depends, UploadFile, HTTPException, status
+import logging
+from typing import List
+
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 from fastapi.responses import PlainTextResponse
+
 from sign.config import settings
 from sign.pgp.pgp import PGP
-from sign.api.schema import  TokenRequest, TokenResponse, ErrMessage
+from sign.api.schema import (
+    TokenRequest,
+    TokenResponse,
+    ErrMessage,
+    BatchSignResponse,
+    FileSignResult,
+)
 from sign.db.helpers import get_user
 from sign.db.models import User
 from sign.auth.jwt import JWT
 from sign.auth.hash import hash_valid
 from sign.errors import UserNotFoundError, FileTooBigError
 from sign.api.dependencies import get_current_user
-import logging
 
 router = APIRouter()
 
@@ -54,11 +63,93 @@ async def sign(
     except FileTooBigError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'file size exeeds {settings.max_upload_bytes} bytes'
+            detail=f'file size exceeds {settings.max_upload_bytes} bytes'
         )
     logging.info("user %s has signed file %s with key %s",
                  user.email, file.filename, keyid)
     return answer
+
+
+@router.post('/sign-batch', response_model=BatchSignResponse,
+             responses={status.HTTP_400_BAD_REQUEST: {"model": ErrMessage}})
+async def sign_batch(
+    keyid: str,
+    files: List[UploadFile] = File(...),
+    sign_type: str = 'detach-sign',
+    sign_algo: str = 'SHA256',
+    user: User = Depends(get_current_user),
+) -> BatchSignResponse:
+    """
+    Sign multiple files asynchronously.
+
+    Due to GPG limitations with detach-sign option, each file is processed
+    individually from download to signature generation. This endpoint processes
+    all files concurrently using async operations for better performance.
+
+    Fails immediately if any file fails (fail-fast behavior).
+
+    Args:
+        keyid: The PGP key ID to use for signing
+        files: List of files to sign
+        sign_type: Signature type ('detach-sign' or 'clear-sign')
+        sign_algo: Digest algorithm (default: 'SHA256')
+        user: Authenticated user (from JWT token)
+
+    Returns:
+        BatchSignResponse with results for each file (all successful)
+
+    Raises:
+        HTTPException: If any file fails to sign
+    """
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='No files provided for signing'
+        )
+
+    if not pgp.key_exists(keyid):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'key {keyid} does not exist'
+        )
+
+    logging.info(
+        "user %s initiated batch signing of %d files with key %s",
+        user.email, len(files), keyid
+    )
+
+    # Process all files asynchronously (fail-fast on first error)
+    try:
+        results_data = await pgp.sign_batch(
+            keyid=keyid,
+            files=files,
+            detach_sign=sign_type == 'detach-sign',
+            digest_algo=sign_algo,
+        )
+    except FileTooBigError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'file size exceeds {settings.max_upload_bytes} bytes',
+        )
+
+    # All files signed successfully
+    file_results = []
+    for filename, signature in results_data:
+        file_results.append(FileSignResult(
+            filename=filename,
+            success=True,
+            signature=signature,
+        ))
+        logging.info(
+            "user %s successfully signed file %s with key %s",
+            user.email, filename, keyid
+        )
+
+    return BatchSignResponse(
+        results=file_results,
+        total=len(files),
+        successful=len(files),
+    )
 
 
 @router.post('/token', response_model=TokenResponse,
