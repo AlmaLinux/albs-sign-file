@@ -5,14 +5,21 @@
 </picture>
 <br/><br/>
 
-Service for signing various text files using PGP  
+Service for signing various text files using PGP
+
+## Signing Backends
+
+The service supports two signing backends:
+
+- **GPG** (default): Uses local GnuPG for signing operations
+- **AWS KMS**: Uses AWS Key Management Service with PGP-compatible signature output
 
 ## Installation
 
-### Prerequirements
-1. GnuPGP binary
-2. At least one private RSA key in PGP database
-3. Python 3.9
+### Prerequisites
+1. Python 3.9+
+2. For GPG backend: GnuPG binary and at least one private RSA key
+3. For KMS backend: AWS credentials and KMS asymmetric signing keys
 
 ### Install service
 1. Create virtual enviroment
@@ -25,7 +32,11 @@ Service for signing various text files using PGP
     ```
 3. Install service with pip
     ```bash
+    # For GPG backend only
     (.venv) pip3 install .
+
+    # For AWS KMS backend (includes boto3, PGPy13, PyYAML)
+    (.venv) pip3 install ".[kms]"
     ```
 
 ### Service configuration
@@ -61,7 +72,7 @@ SF_TMP_FILE_DIR ="/tmp"
 
 # SF_PGP_KEYS_ID - list of PGP key ids that will be used for file signing
 # default N/A
-SF_PGP_KEYS_ID=["EF0F6DF0AFE52FD5", "0673DB399D3E2894"]
+SF_PGP_KEYS_ID=["AAAA1111BBBB2222", "CCCC3333DDDD4444"]
 
 # SF_JWT_EXPIRE_MINUTES - JWT token lifetime (in minutes)
 # default 30
@@ -122,6 +133,155 @@ SENTRY_TRACES_SAMPLE_RATE = 0.2
 SENTRY_ENV = "dev"
 
 ```
+
+### YAML Configuration (Recommended)
+
+For complex configurations, especially with AWS KMS, use a YAML config file.
+Set the config file path via environment variable:
+
+```bash
+export SF_CONFIG_FILE=/etc/sign-file/config.yaml
+```
+
+**Example `config.yaml`:**
+
+```yaml
+# Signing backend: 'gpg' or 'kms'
+signing_backend: kms
+
+max_upload_bytes: 100000000
+tmp_dir: /tmp
+root_url: ""
+service: albs-sign-service
+
+# GPG backend configuration
+gpg:
+  binary: /usr/bin/gpg2
+  keyring: ~/.gnupg/pubring.kbx
+  locks_dir: /tmp/gpg_locks
+  keys:
+    - AAAA1111BBBB2222
+    - CCCC3333DDDD4444
+
+# AWS KMS backend configuration
+kms:
+  region: us-east-1
+  signing_algorithm: RSASSA_PKCS1_V1_5_SHA_256
+  max_workers: 10
+  keys:
+    - kms_id: alias/almalinux-signing-key
+      gpg_fingerprint: AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555
+    - kms_id: alias/secondary-signing-key
+      gpg_fingerprint: FFFF6666AAAA7777BBBB8888CCCC9999DDDD0000
+
+# Database configuration
+database:
+  url: postgresql://signfile:password@localhost:5432/signfile
+  pool_size: 5
+  max_overflow: 10
+  pool_recycle: 3600
+  pool_pre_ping: true
+  echo: false
+
+# JWT configuration
+jwt:
+  secret_key: your-secret-key-here
+  expire_minutes: 30
+  algorithm: HS256
+
+# Sentry configuration (optional)
+sentry:
+  dsn: ""
+  traces_sample_rate: 0.2
+  environment: dev
+```
+
+**Configuration Priority:**
+
+Settings are loaded in this order (highest priority first):
+1. Environment variables (`SF_*` prefix)
+2. YAML config file
+3. Default values
+
+This allows keeping secrets (like `SF_JWT_SECRET_KEY`) in environment variables while having the rest in the YAML file.
+
+### AWS KMS Backend Setup
+
+The KMS backend produces PGP-compatible signatures that can be verified with standard `gpg --verify` commands.
+
+#### Prerequisites
+
+1. **AWS Credentials**: Configure via environment variables, AWS CLI, or IAM role
+   ```bash
+   export AWS_ACCESS_KEY_ID=your-access-key
+   export AWS_SECRET_ACCESS_KEY=your-secret-key
+   export AWS_DEFAULT_REGION=us-east-1
+   ```
+
+2. **KMS Key**: Create or import an asymmetric RSA signing key in AWS KMS
+   - Key spec: `RSA_4096` (recommended) or `RSA_2048`
+   - Key usage: `SIGN_VERIFY`
+
+3. **IAM Permissions**: The service needs these KMS permissions:
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Action": [
+           "kms:Sign",
+           "kms:DescribeKey",
+           "kms:GetPublicKey"
+         ],
+         "Resource": "arn:aws:kms:*:*:key/*"
+       }
+     ]
+   }
+   ```
+
+#### Importing an Existing GPG Key into AWS KMS
+
+If you have an existing GPG key, you can import it into AWS KMS using BYOK (Bring Your Own Key):
+
+1. **Export your GPG private key:**
+   ```bash
+   gpg --export-secret-keys --armor YOUR_KEY_FINGERPRINT > private.asc
+   ```
+
+2. **Create KMS key with external origin:**
+   ```bash
+   aws kms create-key \
+     --key-spec RSA_4096 \
+     --key-usage SIGN_VERIFY \
+     --origin EXTERNAL \
+     --description "Imported GPG signing key"
+   ```
+
+3. **Get wrapping parameters:**
+   ```bash
+   aws kms get-parameters-for-import \
+     --key-id <key-id> \
+     --wrapping-algorithm RSA_AES_KEY_WRAP_SHA_256 \
+     --wrapping-key-spec RSA_4096
+   ```
+
+4. **Prepare and import key material** using the provided `prepare_kms_key_material.py` script
+
+5. **Configure the service** with the KMS key ID and corresponding GPG fingerprint in `config.yaml`
+
+#### KMS Configuration Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `kms.region` | AWS region | Uses `AWS_DEFAULT_REGION` |
+| `kms.signing_algorithm` | KMS signing algorithm | `RSASSA_PKCS1_V1_5_SHA_256` |
+| `kms.max_workers` | Max concurrent signing operations | `10` |
+| `kms.keys` | List of KMS keys with GPG fingerprints | Required |
+
+Each key in `kms.keys` requires:
+- `kms_id`: KMS key ID or alias (e.g., `alias/my-key` or full ARN)
+- `gpg_fingerprint`: The GPG fingerprint to embed in signatures (40 hex chars)
 
 ### Database initialization
 
@@ -300,11 +460,24 @@ INFO:     Application startup complete.
 ```
 
 # API Reference
-SWAGGER API documentaion available at /docs enpoint
+SWAGGER API documentation available at `/docs` endpoint
+
+## Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/ping` | GET | Health check |
+| `/sign` | POST | Sign a single file |
+| `/sign-batch` | POST | Sign multiple files |
+| `/token` | POST | Get JWT access token |
+
+All signing endpoints work with both GPG and KMS backends. The `keyid` parameter accepts:
+- For GPG: Key fingerprint (e.g., `AAAA1111BBBB2222`)
+- For KMS: Key ID or alias (e.g., `alias/my-key`)
 
 ## Batch Signing Endpoint
 
-The service includes a `/sign-batch` endpoint for signing multiple files in a single request. Files are processed asynchronously with I/O operations parallelized. The implementation uses exclusive locks for cross-process protection and semaphores for safe GPG agent restarts within each process.
+The service includes a `/sign-batch` endpoint for signing multiple files in a single request. Files are processed asynchronously with I/O operations parallelized. For the GPG backend, exclusive locks and semaphores ensure safe GPG agent operation. For the KMS backend, concurrent signing is managed via a thread pool.
 
 **Note:** The endpoint uses fail-fast behavior - if any file fails to sign, the entire batch operation fails immediately.
 
@@ -332,7 +505,7 @@ curl -X 'POST' \
 ### Request
 ```bash
 curl -X 'POST' \
-  'http://localhost:8000/sign?keyid=EF0F6DF0AFE52FD5' \
+  'http://localhost:8000/sign?keyid=AAAA1111BBBB2222' \
   -H 'accept: text/plain' \
   -H 'Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJlbWFpbCI6Imt6aHVrb3ZAY2xvdWRsaW51eC5jb20iLCJleHAiOjE2NjY3ODI0OTJ9.SdqG6ex_VWtHXzXQXuzIUGnWaKY7HFrrMrwmLVYPwH4' \
   -H 'Content-Type: multipart/form-data' \
@@ -402,7 +575,7 @@ if __name__ == '__main__':
 ### Request
 ```bash
 curl -X 'POST' \
-  'http://localhost:8000/sign?keyid=EF0F6DF0AFE52FD5&sign_type=clear-sign' \
+  'http://localhost:8000/sign?keyid=AAAA1111BBBB2222&sign_type=clear-sign' \
   -H 'accept: text/plain' \
   -H 'Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJlbWFpbCI6Imt6aHVrb3ZAY2xvdWRsaW51eC5jb20iLCJleHAiOjE2NjY3ODI0OTJ9.SdqG6ex_VWtHXzXQXuzIUGnWaKY7HFrrMrwmLVYPwH4' \
   -H 'Content-Type: multipart/form-data' \
@@ -438,7 +611,7 @@ Save response as `<filename>.acs` and run `gpg2 --verify <filename>.acs <filenam
 ```bash
 gpg2 --verify README.md.acs README.md
 gpg: Signature made среда, 26 октября 2022 г. 10:43:15 CEST
-gpg:                using RSA key B1427E1CEA16226DFEB13A62EF0F6DF0AFE52FD5
+gpg:                using RSA key AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555
 gpg: Good signature from "key1 (test key) <zklevsha@gmail.com>" [ultimate]
 ```
 
@@ -446,9 +619,10 @@ gpg: Good signature from "key1 (test key) <zklevsha@gmail.com>" [ultimate]
 ## Development mode
 This section describes how to install service locally for development and tests
 
-### Prerequirements
-  1. gnupgp
-  2. docker + docker-compose
+### Prerequisites
+  1. For GPG backend: GnuPG
+  2. For KMS backend: AWS credentials configured
+  3. docker + docker-compose (optional)
 
 
 ### Key generation
@@ -461,11 +635,11 @@ This section describes how to install service locally for development and tests
   gpg --list-key --keyid-format long
   /home/kzhukov/.gnupg/pubring.kbx
   --------------------------------
-  pub   rsa4096/03A5E40D1ABD030B 2022-10-26 [SC] [expires: 2024-10-25]
-        7AE918401B9F0EF36B7A5E7303A5E40D1ABD030B
-  uid                 [ultimate] Kirill Zhukov <kzhukov@test.ru>
+  pub   rsa4096/AAAA1111BBBB2222 2022-10-26 [SC] [expires: 2024-10-25]
+        AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555
+  uid                 [ultimate] Your Name <your@email.com>
   ```
-  For the example above keyid is __03A5E40D1ABD030B__
+  For the example above keyid is __AAAA1111BBBB2222__
 
 ### Create configuration file (.env)
 Create .env file with following  config 
@@ -474,7 +648,7 @@ Create .env file with following  config
 SF_PASS_DB_DEV_PASS="<password>"
 SF_PASS_DB_DEV_MODE=True
 # change according your key id
-SF_PGP_KEYS_ID=["03A5E40D1ABD030B"]
+SF_PGP_KEYS_ID=["AAAA1111BBBB2222"]
 SF_JWT_SECRET_KEY="access-secret"
 # change according your .gnupg location
 SF_HOST_GNUPG="/home/<some_user>/.gnupg"
@@ -516,6 +690,56 @@ albs-sign-file-sign_file-1  | [2022-10-26 23:21:29,764] INFO - Application start
 After startup service will be available at http://hostip:8000 (make sure that 8000 port is open). Also there is a test user created: `login:test@test.ru password:test`
 
 **Note:** By default, docker-compose now includes a PostgreSQL service. If you prefer to use SQLite, modify the `SF_DB_URL` in your `.env` file and remove the `depends_on` section from `docker-compose.yml`.
+
+### Development with KMS Backend
+
+For local development with the KMS backend:
+
+1. **Create config file** `config.yaml`:
+   ```yaml
+   signing_backend: kms
+
+   kms:
+     region: us-east-1
+     keys:
+       - kms_id: alias/dev-signing-key
+         gpg_fingerprint: AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555
+
+   database:
+     url: sqlite:///./sign-file.sqlite3
+
+   jwt:
+     secret_key: dev-secret-key
+   ```
+
+2. **Set environment variables**:
+   ```bash
+   export SF_CONFIG_FILE=./config.yaml
+   export AWS_ACCESS_KEY_ID=your-key
+   export AWS_SECRET_ACCESS_KEY=your-secret
+   export AWS_DEFAULT_REGION=us-east-1
+   ```
+
+3. **Start the service**:
+   ```bash
+   python3 start.py
+   ```
+
+4. **Test signing**:
+   ```bash
+   # Get token
+   TOKEN=$(curl -s -X POST 'http://localhost:8000/token' \
+     -H 'Content-Type: application/json' \
+     -d '{"email":"test@test.ru","password":"test"}' | jq -r .token)
+
+   # Sign a file
+   curl -X POST 'http://localhost:8000/sign?keyid=alias/dev-signing-key' \
+     -H "Authorization: Bearer $TOKEN" \
+     -F 'file=@README.md' > README.md.asc
+
+   # Verify signature
+   gpg --verify README.md.asc README.md
+   ```
 
 
 # Deploy service behind the Nginx

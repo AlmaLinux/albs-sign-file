@@ -18,5 +18,12 @@ setup(
         'sentry-sdk == 2.22.0',
         'psycopg2-binary >= 2.9.3, < 3.0',
         'alembic == 1.13.1',
+        'PyYAML >= 6.0',
     ],
+    extras_require={
+        'kms': [
+            'boto3 >= 1.26.0',
+            'PGPy13 >= 0.6.1rc1',
+        ],
+    },
 )
