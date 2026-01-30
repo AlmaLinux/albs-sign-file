@@ -37,6 +37,8 @@ class KMS:
         self,
         key_ids: List[str],
         gpg_fingerprints: dict,
+        access_key_id: Optional[str] = None,
+        secret_access_key: Optional[str] = None,
         region: Optional[str] = None,
         signing_algorithm: str = 'RSASSA_PKCS1_V1_5_SHA_256',
         max_upload_bytes: int = 100000000,
@@ -49,6 +51,8 @@ class KMS:
         Args:
             key_ids: List of KMS key IDs or aliases
             gpg_fingerprints: Mapping of KMS key ID -> GPG fingerprint
+            access_key_id: AWS access key ID (optional, uses env/IAM if not set)
+            secret_access_key: AWS secret access key (optional)
             region: AWS region (uses default if not specified)
             signing_algorithm: KMS signing algorithm
             max_upload_bytes: Maximum file size for signing
@@ -69,12 +73,14 @@ class KMS:
             max_pool_connections=max_workers + 5,
         )
 
+        client_kwargs = {'config': config}
         if region:
-            self._client = boto3.client(
-                'kms', region_name=region, config=config
-            )
-        else:
-            self._client = boto3.client('kms', config=config)
+            client_kwargs['region_name'] = region
+        if access_key_id and secret_access_key:
+            client_kwargs['aws_access_key_id'] = access_key_id
+            client_kwargs['aws_secret_access_key'] = secret_access_key
+
+        self._client = boto3.client('kms', **client_kwargs)
 
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
@@ -93,9 +99,18 @@ class KMS:
                         key_id,
                         key_state,
                     )
+                else:
+                    logger.info("KMS key %s validated successfully", key_id)
             except ClientError as e:
-                logger.error("Failed to validate KMS key %s: %s", key_id, e)
-                raise ValueError(f"Invalid KMS key: {key_id}") from e
+                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+                error_msg = e.response.get('Error', {}).get('Message', str(e))
+                logger.error(
+                    "Failed to validate KMS key %s: [%s] %s",
+                    key_id, error_code, error_msg
+                )
+                raise ValueError(
+                    f"Invalid KMS key '{key_id}': [{error_code}] {error_msg}"
+                ) from e
 
     def key_exists(self, keyid: str) -> bool:
         """Check if a key exists in the configured key list."""

@@ -145,6 +145,14 @@ class Settings(BaseSettings):
         default=SIGNING_BACKEND_DEFAULT,
         description="signing backend to use: 'gpg' or 'kms'",
     )
+    kms_access_key_id: Optional[str] = Field(
+        default=None,
+        description="AWS access key ID for KMS",
+    )
+    kms_secret_access_key: Optional[str] = Field(
+        default=None,
+        description="AWS secret access key for KMS",
+    )
     kms_region: Optional[str] = Field(
         default=None,
         description="AWS region for KMS",
@@ -241,6 +249,10 @@ def create_settings() -> Settings:
 
     if 'kms' in yaml_config:
         kms = yaml_config['kms']
+        if 'access_key_id' in kms:
+            flat_config['kms_access_key_id'] = kms['access_key_id']
+        if 'secret_access_key' in kms:
+            flat_config['kms_secret_access_key'] = kms['secret_access_key']
         if 'region' in kms:
             flat_config['kms_region'] = kms['region']
         if 'signing_algorithm' in kms:
@@ -280,6 +292,8 @@ def create_settings() -> Settings:
         'SF_SENTRY_TRACES_SAMPLE_RATE': 'sentry_traces_sample_rate',
         'SF_SENTRY_ENV': 'sentry_environment',
         'SF_SIGNING_BACKEND': 'signing_backend',
+        'SF_KMS_ACCESS_KEY_ID': 'kms_access_key_id',
+        'SF_KMS_SECRET_ACCESS_KEY': 'kms_secret_access_key',
         'SF_KMS_REGION': 'kms_region',
         'SF_KMS_SIGNING_ALGORITHM': 'kms_signing_algorithm',
         'SF_KMS_MAX_WORKERS': 'kms_max_workers',

@@ -83,6 +83,8 @@ def get_signing_backend() -> SigningBackend:
             KMS(
                 key_ids=kms_key_ids,
                 gpg_fingerprints=kms_gpg_fingerprints,
+                access_key_id=settings.kms_access_key_id,
+                secret_access_key=settings.kms_secret_access_key,
                 region=settings.kms_region,
                 signing_algorithm=settings.kms_signing_algorithm,
                 max_upload_bytes=settings.max_upload_bytes,

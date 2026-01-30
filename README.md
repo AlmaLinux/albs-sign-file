@@ -165,6 +165,9 @@ gpg:
 
 # AWS KMS backend configuration
 kms:
+  # AWS credentials (optional - uses env vars or IAM role if not set)
+  # access_key_id: YOUR_ACCESS_KEY
+  # secret_access_key: YOUR_SECRET_KEY
   region: us-east-1
   signing_algorithm: RSASSA_PKCS1_V1_5_SHA_256
   max_workers: 10
@@ -274,6 +277,8 @@ If you have an existing GPG key, you can import it into AWS KMS using BYOK (Brin
 
 | Option | Description | Default |
 |--------|-------------|---------|
+| `kms.access_key_id` | AWS access key ID | Uses env/IAM |
+| `kms.secret_access_key` | AWS secret access key | Uses env/IAM |
 | `kms.region` | AWS region | Uses `AWS_DEFAULT_REGION` |
 | `kms.signing_algorithm` | KMS signing algorithm | `RSASSA_PKCS1_V1_5_SHA_256` |
 | `kms.max_workers` | Max concurrent signing operations | `10` |
