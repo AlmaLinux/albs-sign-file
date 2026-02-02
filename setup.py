@@ -9,7 +9,7 @@ setup(
         'plumbum == 1.10.0',
         'fastapi[all] == 0.128.0',
         'fastapi-users[all] == 10.1.1',
-        'aiofiles == 22.1.0',
+        'aiofiles == 25.1.0',
         'pexpect == 4.8.0',
         'SQLalchemy == 1.4.42',
         'databases == 0.6.1',
