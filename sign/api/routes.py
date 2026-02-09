@@ -41,6 +41,7 @@ async def sign(
     file: UploadFile,
     sign_type: str = 'detach-sign',
     sign_algo: str = 'SHA256',
+    raw_signature: bool = False,
     user: User = Depends(get_current_user),
     backend: SigningBackend = Depends(get_backend),
 ) -> str:
@@ -55,15 +56,21 @@ async def sign(
             file,
             detach_sign=sign_type == 'detach-sign',
             digest_algo=sign_algo,
+            raw_signature=raw_signature,
         )
     except FileTooBigError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f'file size exceeds {settings.max_upload_bytes} bytes',
         )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     logging.info(
-        "user %s has signed file %s with key %s",
-        user.email, file.filename, keyid,
+        "user %s has signed file %s with key %s (raw=%s)",
+        user.email, file.filename, keyid, raw_signature,
     )
     return answer
 
@@ -75,6 +82,7 @@ async def sign_batch(
     files: List[UploadFile] = File(...),
     sign_type: str = 'detach-sign',
     sign_algo: str = 'SHA256',
+    raw_signature: bool = False,
     user: User = Depends(get_current_user),
     backend: SigningBackend = Depends(get_backend),
 ) -> BatchSignResponse:
@@ -89,6 +97,7 @@ async def sign_batch(
         files: List of files to sign
         sign_type: Signature type ('detach-sign' or 'clear-sign')
         sign_algo: Digest algorithm (default: 'SHA256')
+        raw_signature: If True, return raw KMS signatures (KMS backend only)
         user: Authenticated user (from JWT token)
 
     Returns:
@@ -110,8 +119,8 @@ async def sign_batch(
         )
 
     logging.info(
-        "user %s initiated batch signing of %d files with key %s",
-        user.email, len(files), keyid,
+        "user %s initiated batch signing of %d files with key %s (raw=%s)",
+        user.email, len(files), keyid, raw_signature,
     )
 
     try:
@@ -120,11 +129,17 @@ async def sign_batch(
             files=files,
             detach_sign=sign_type == 'detach-sign',
             digest_algo=sign_algo,
+            raw_signature=raw_signature,
         )
     except FileTooBigError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f'file size exceeds {settings.max_upload_bytes} bytes',
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
         )
 
     file_results = []
