@@ -5,6 +5,8 @@ This module provides PGP-compatible signing using AWS KMS keys.
 """
 
 import asyncio
+import base64
+import hashlib
 import logging
 import syslog
 from concurrent.futures import ThreadPoolExecutor
@@ -167,6 +169,7 @@ class KMS:
         file: UploadFile,
         detach_sign: bool = True,
         digest_algo: str = 'SHA256',
+        raw_signature: bool = False,
     ) -> str:
         """
         Sign a file using AWS KMS.
@@ -176,9 +179,10 @@ class KMS:
             file: File to sign (FastAPI UploadFile)
             detach_sign: True for detached signature, False for cleartext
             digest_algo: Hash algorithm (SHA256, SHA384, SHA512)
+            raw_signature: If True, return base64-encoded raw KMS signature
 
         Returns:
-            ASCII-armored PGP signature
+            ASCII-armored PGP signature or base64-encoded raw signature
         """
         if keyid not in self._key_ids:
             raise ValueError(f"Key not found: {keyid}")
@@ -193,46 +197,67 @@ class KMS:
             )
 
         filename = file.filename or 'unknown'
-        hash_before = hash_content(content)
+        file_hash = hash_content(content)
 
         logger.info(
-            "Signing file %s (%d bytes) with KMS key %s",
+            "Signing file %s (%d bytes) with KMS key %s (raw=%s)",
             filename,
             len(content),
             keyid,
+            raw_signature,
         )
 
         try:
-            gpg_fingerprint = self.get_gpg_fingerprint(keyid)
+            if raw_signature:
+                # Compute simple hash of content for raw signature
+                algo_map = {
+                    'SHA256': 'sha256',
+                    'SHA384': 'sha384',
+                    'SHA512': 'sha512',
+                }
+                hash_algo = algo_map.get(digest_algo.upper(), 'sha256')
+                digest = hashlib.new(hash_algo, content).digest()
 
-            # Compute the PGP signature hash
-            digest, sig_type, hash_algo, creation_time, issuer_key_id = (
-                compute_pgp_hash(
-                    content, digest_algo, detach_sign, gpg_fingerprint
+                # Sign with KMS
+                loop = asyncio.get_event_loop()
+                sig_bytes = await loop.run_in_executor(
+                    self._executor, self._sign_digest, keyid, digest
                 )
-            )
 
-            # Sign with KMS in thread pool (boto3 is synchronous)
-            loop = asyncio.get_event_loop()
-            raw_signature = await loop.run_in_executor(
-                self._executor, self._sign_digest, keyid, digest
-            )
+                self._log_signing_event(filename, keyid, file_hash, True)
+                return base64.b64encode(sig_bytes).decode('ascii')
 
-            # Wrap in PGP format
-            pgp_signature = wrap_signature_as_pgp(
-                raw_signature,
-                content,
-                digest_algo,
-                detach_sign,
-                gpg_fingerprint,
-                creation_time,
-            )
+            else:
+                gpg_fingerprint = self.get_gpg_fingerprint(keyid)
 
-            self._log_signing_event(filename, keyid, hash_before, True)
-            return pgp_signature
+                # Compute the PGP signature hash
+                digest, sig_type, hash_algo, creation_time, issuer_key_id = (
+                    compute_pgp_hash(
+                        content, digest_algo, detach_sign, gpg_fingerprint
+                    )
+                )
+
+                # Sign with KMS in thread pool (boto3 is synchronous)
+                loop = asyncio.get_event_loop()
+                sig_bytes = await loop.run_in_executor(
+                    self._executor, self._sign_digest, keyid, digest
+                )
+
+                # Wrap in PGP format
+                pgp_signature = wrap_signature_as_pgp(
+                    sig_bytes,
+                    content,
+                    digest_algo,
+                    detach_sign,
+                    gpg_fingerprint,
+                    creation_time,
+                )
+
+                self._log_signing_event(filename, keyid, file_hash, True)
+                return pgp_signature
 
         except ClientError as e:
-            self._log_signing_event(filename, keyid, hash_before, False)
+            self._log_signing_event(filename, keyid, file_hash, False)
             logger.error("KMS signing failed: %s", e)
             raise RuntimeError(f"KMS signing failed: {e}") from e
 
@@ -242,6 +267,7 @@ class KMS:
         files: List[UploadFile],
         detach_sign: bool = True,
         digest_algo: str = 'SHA256',
+        raw_signature: bool = False,
     ) -> List[Tuple[str, str]]:
         """
         Sign multiple files using AWS KMS.
@@ -251,12 +277,14 @@ class KMS:
             files: List of files to sign
             detach_sign: True for detached signatures
             digest_algo: Hash algorithm
+            raw_signature: If True, return base64-encoded raw signatures
 
         Returns:
             List of (filename, signature) tuples
         """
         tasks = [
-            self.sign(keyid, file, detach_sign, digest_algo) for file in files
+            self.sign(keyid, file, detach_sign, digest_algo, raw_signature)
+            for file in files
         ]
 
         results = []

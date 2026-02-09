@@ -23,6 +23,7 @@ class SigningBackend(ABC):
         file: UploadFile,
         detach_sign: bool = True,
         digest_algo: str = 'SHA256',
+        raw_signature: bool = False,
     ) -> str:
         pass
 
@@ -33,6 +34,7 @@ class SigningBackend(ABC):
         files: List[UploadFile],
         detach_sign: bool = True,
         digest_algo: str = 'SHA256',
+        raw_signature: bool = False,
     ) -> List[Tuple[str, str]]:
         pass
 
@@ -129,7 +131,12 @@ class GPGAdapter(SigningBackend):
         file: UploadFile,
         detach_sign: bool = True,
         digest_algo: str = 'SHA256',
+        raw_signature: bool = False,
     ) -> str:
+        if raw_signature:
+            raise ValueError(
+                "raw_signature is not supported with GPG backend"
+            )
         return await self._pgp.sign(
             keyid=keyid,
             file=file,
@@ -143,7 +150,12 @@ class GPGAdapter(SigningBackend):
         files: List[UploadFile],
         detach_sign: bool = True,
         digest_algo: str = 'SHA256',
+        raw_signature: bool = False,
     ) -> List[Tuple[str, str]]:
+        if raw_signature:
+            raise ValueError(
+                "raw_signature is not supported with GPG backend"
+            )
         return await self._pgp.sign_batch(
             keyid=keyid,
             files=files,
@@ -175,12 +187,14 @@ class KMSAdapter(SigningBackend):
         file: UploadFile,
         detach_sign: bool = True,
         digest_algo: str = 'SHA256',
+        raw_signature: bool = False,
     ) -> str:
         return await self._kms.sign(
             keyid=keyid,
             file=file,
             detach_sign=detach_sign,
             digest_algo=digest_algo,
+            raw_signature=raw_signature,
         )
 
     async def sign_batch(
@@ -189,10 +203,12 @@ class KMSAdapter(SigningBackend):
         files: List[UploadFile],
         detach_sign: bool = True,
         digest_algo: str = 'SHA256',
+        raw_signature: bool = False,
     ) -> List[Tuple[str, str]]:
         return await self._kms.sign_batch(
             keyid=keyid,
             files=files,
             detach_sign=detach_sign,
             digest_algo=digest_algo,
+            raw_signature=raw_signature,
         )
