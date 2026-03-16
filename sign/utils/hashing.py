@@ -50,3 +50,24 @@ def get_hasher():
         Hashlib hashing function.
     """
     return hashlib.new('sha256')
+
+
+def hash_content(content: bytes, algorithm: str = 'sha256') -> str:
+    """
+    Returns checksum (hexadecimal digest) of the content.
+
+    Parameters
+    ----------
+    content : bytes
+        Content to hash.
+    algorithm : str
+        Hash algorithm name (default: sha256).
+
+    Returns
+    -------
+    str
+        Checksum (hexadecimal digest) of the content.
+    """
+    hasher = hashlib.new(algorithm)
+    hasher.update(content)
+    return hasher.hexdigest()

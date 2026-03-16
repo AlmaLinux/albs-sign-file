@@ -1,38 +1,32 @@
 import logging
 from typing import List
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import PlainTextResponse
 
-from sign.config import settings
-from sign.pgp.pgp import PGP
+from sign.api.dependencies import get_backend, get_current_user
 from sign.api.schema import (
+    BatchSignResponse,
+    ErrMessage,
+    FileSignResult,
     TokenRequest,
     TokenResponse,
-    ErrMessage,
-    BatchSignResponse,
-    FileSignResult,
 )
+from sign.auth.hash import hash_valid
+from sign.auth.jwt import JWT
+from sign.config import settings
 from sign.db.helpers import get_user
 from sign.db.models import User
-from sign.auth.jwt import JWT
-from sign.auth.hash import hash_valid
-from sign.errors import UserNotFoundError, FileTooBigError
-from sign.api.dependencies import get_current_user
+from sign.errors import FileTooBigError, UserNotFoundError
+from sign.signing.backend import SigningBackend
 
 router = APIRouter()
 
-pgp = PGP(keyring=settings.keyring,
-          gpg_binary=settings.gpg_binary,
-          pgp_keys=settings.pgp_keys,
-          pass_db_dev_mode=settings.pass_db_dev_mode,
-          pass_db_dev_pass=settings.pass_db_dev_pass,
-          max_upload_bytes=settings.max_upload_bytes)
-
-
-jwt = JWT(secret=settings.jwt_secret_key,
-          expire_minutes=settings.jwt_expire_minutes,
-          hash_algoritm=settings.jwt_algoritm)
+jwt = JWT(
+    secret=settings.jwt_secret_key,
+    expire_minutes=settings.jwt_expire_minutes,
+    hash_algoritm=settings.jwt_algoritm,
+)
 
 
 @router.get('/ping')
@@ -48,13 +42,15 @@ async def sign(
     sign_type: str = 'detach-sign',
     sign_algo: str = 'SHA256',
     user: User = Depends(get_current_user),
+    backend: SigningBackend = Depends(get_backend),
 ) -> str:
-    if not pgp.key_exists(keyid):
+    if not backend.key_exists(keyid):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'key {keyid} does not exists')
+            detail=f'key {keyid} does not exist',
+        )
     try:
-        answer = await pgp.sign(
+        answer = await backend.sign(
             keyid,
             file,
             detach_sign=sign_type == 'detach-sign',
@@ -63,10 +59,12 @@ async def sign(
     except FileTooBigError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'file size exceeds {settings.max_upload_bytes} bytes'
+            detail=f'file size exceeds {settings.max_upload_bytes} bytes',
         )
-    logging.info("user %s has signed file %s with key %s",
-                 user.email, file.filename, keyid)
+    logging.info(
+        "user %s has signed file %s with key %s",
+        user.email, file.filename, keyid,
+    )
     return answer
 
 
@@ -78,18 +76,16 @@ async def sign_batch(
     sign_type: str = 'detach-sign',
     sign_algo: str = 'SHA256',
     user: User = Depends(get_current_user),
+    backend: SigningBackend = Depends(get_backend),
 ) -> BatchSignResponse:
     """
     Sign multiple files asynchronously.
 
-    Due to GPG limitations with detach-sign option, each file is processed
-    individually from download to signature generation. This endpoint processes
-    all files concurrently using async operations for better performance.
-
-    Fails immediately if any file fails (fail-fast behavior).
+    Processes all files concurrently using async operations for better
+    performance. Fails immediately if any file fails (fail-fast behavior).
 
     Args:
-        keyid: The PGP key ID to use for signing
+        keyid: The key ID to use for signing
         files: List of files to sign
         sign_type: Signature type ('detach-sign' or 'clear-sign')
         sign_algo: Digest algorithm (default: 'SHA256')
@@ -104,23 +100,22 @@ async def sign_batch(
     if not files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='No files provided for signing'
+            detail='No files provided for signing',
         )
 
-    if not pgp.key_exists(keyid):
+    if not backend.key_exists(keyid):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'key {keyid} does not exist'
+            detail=f'key {keyid} does not exist',
         )
 
     logging.info(
         "user %s initiated batch signing of %d files with key %s",
-        user.email, len(files), keyid
+        user.email, len(files), keyid,
     )
 
-    # Process all files asynchronously (fail-fast on first error)
     try:
-        results_data = await pgp.sign_batch(
+        results_data = await backend.sign_batch(
             keyid=keyid,
             files=files,
             detach_sign=sign_type == 'detach-sign',
@@ -132,7 +127,6 @@ async def sign_batch(
             detail=f'file size exceeds {settings.max_upload_bytes} bytes',
         )
 
-    # All files signed successfully
     file_results = []
     for filename, signature in results_data:
         file_results.append(FileSignResult(
@@ -142,7 +136,7 @@ async def sign_batch(
         ))
         logging.info(
             "user %s successfully signed file %s with key %s",
-            user.email, filename, keyid
+            user.email, filename, keyid,
         )
 
     return BatchSignResponse(

@@ -1,16 +1,31 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer
-from sign.db.models import User
-from sign.db.helpers import get_user
-from sign.config import settings
+
 from sign.auth.jwt import JWT
+from sign.config import settings
+from sign.db.helpers import get_user
+from sign.db.models import User
 from sign.errors import UserNotFoundError
+from sign.signing.backend import SigningBackend, get_signing_backend
+
 from jwt.exceptions import PyJWTError
 
-jwt = JWT(secret=settings.jwt_secret_key,
-          expire_minutes=settings.jwt_expire_minutes,
-          hash_algoritm=settings.jwt_algoritm)
+jwt = JWT(
+    secret=settings.jwt_secret_key,
+    expire_minutes=settings.jwt_expire_minutes,
+    hash_algoritm=settings.jwt_algoritm,
+)
 bearer_scheme = HTTPBearer()
+
+_signing_backend: SigningBackend = None
+
+
+def get_backend() -> SigningBackend:
+    """Get the signing backend (lazy singleton)."""
+    global _signing_backend
+    if _signing_backend is None:
+        _signing_backend = get_signing_backend()
+    return _signing_backend
 
 
 async def get_current_user(credentials=Depends(bearer_scheme)) -> User:
