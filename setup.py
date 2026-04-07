@@ -13,6 +13,7 @@ setup(
         'SQLAlchemy >= 1.4.42, < 3.0',
         'bcrypt >= 4.0.1',
         'pyjwt >= 2.4.0',
+        'pydantic-settings >= 2.0.0',
         'sentry-sdk >= 2.22.0',
         'psycopg2-binary >= 2.9.3',
         'alembic >= 1.13.1',

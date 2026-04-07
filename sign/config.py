@@ -2,7 +2,8 @@ import logging
 import os
 from typing import Dict, List, Optional
 
-from pydantic import BaseSettings, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +305,10 @@ def create_settings() -> Settings:
     for env_var, field_name in env_mapping.items():
         if env_var in os.environ:
             flat_config[field_name] = os.environ[env_var]
+
+    if 'SF_PGP_KEYS_ID' in os.environ:
+        import json
+        flat_config['pgp_keys'] = json.loads(os.environ['SF_PGP_KEYS_ID'])
 
     return Settings(**flat_config)
 

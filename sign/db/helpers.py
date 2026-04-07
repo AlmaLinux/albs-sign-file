@@ -1,7 +1,7 @@
 import re
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from sign.auth.hash import get_hash
@@ -116,7 +116,7 @@ def db_is_connected() -> bool:
     try:
         with engine.connect() as conn:
             # Execute a simple query to verify connection
-            result = conn.execute("SELECT 1 as health_check")
+            result = conn.execute(text("SELECT 1 as health_check"))
             result.fetchone()
             return True
     except Exception:
