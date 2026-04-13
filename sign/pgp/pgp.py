@@ -38,8 +38,8 @@ class PGP:
         self.tmp_dir = tmp_dir
         self.__pass_db.ask_for_passwords()
         self.__syslog = SysLog(tag_name=settings.service)
-        # Semaphore to control GPG operations and agent restarts
-        self.__gpg_semaphore = asyncio.Semaphore(1)
+        # Semaphore created lazily to avoid event loop issues in threads
+        self.__gpg_semaphore = None
 
     def list_keys(self):
         return self.__gpg.list_keys()
@@ -159,6 +159,8 @@ class PGP:
             ]
 
             # Use semaphore to protect GPG operation and agent restart
+            if self.__gpg_semaphore is None:
+                self.__gpg_semaphore = asyncio.Semaphore(1)
             async with self.__gpg_semaphore:
                 out, status = pexpect.run(
                     command=' '.join(sign_cmd.formulate()),

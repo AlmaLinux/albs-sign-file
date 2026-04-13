@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel
 
@@ -15,7 +15,7 @@ class TokenResponse(BaseModel):
 
 
 class UserSchema(BaseModel):
-    user_id: str
+    user_id: Union[str, int]
     email: str
 
 

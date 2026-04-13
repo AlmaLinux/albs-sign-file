@@ -7,6 +7,5 @@ if __name__ == "__main__":
         port=8000,
         reload=False,
         log_level="debug",
-        debug=True,
         workers=4,
     )
