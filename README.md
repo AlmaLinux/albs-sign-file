@@ -576,6 +576,93 @@ if __name__ == '__main__':
     print(sign_file())
 ```
 
+## Upload compressed payloads (optional)
+
+Both `/sign` and `/sign-batch` accept an optional `compression` form field. When
+set, the server streams the upload through a decompressor before signing, which
+can significantly reduce the amount of data sent over the wire for
+compressible files. The server still enforces `SF_MAX_UPLOAD_BYTES` against the
+**decompressed** size, and the returned signature is computed over the
+decompressed contents (so `gpg --verify` is run against the original file, not
+the compressed blob).
+
+| Value  | Behavior                                  |
+|--------|-------------------------------------------|
+| _omitted_ / empty | No decompression (default)     |
+| `zstd` | Body is zstd-compressed; server streams-decompresses on read |
+
+Unsupported values return HTTP 400.
+
+### curl example
+
+Compress the file with `zstd` first, then upload it together with
+`compression=zstd`:
+
+```bash
+zstd -3 my-file -o my-file.zst
+
+curl -X POST \
+  'http://localhost:8000/sign?keyid=AAAA1111BBBB2222' \
+  -H "Authorization: Bearer $TOKEN" \
+  -F 'compression=zstd' \
+  -F 'file=@my-file.zst;type=application/octet-stream' \
+  > my-file.asc
+
+gpg --verify my-file.asc my-file   # verifies against the ORIGINAL file
+```
+
+### Python example
+
+```python
+import requests
+import zstandard
+from urllib.parse import urljoin
+
+BASE_URL = 'http://localhost:8000'
+KEYID = 'AAAA1111BBBB2222'
+TOKEN = '...'  # from /token
+
+def sign_compressed(path: str) -> str:
+    with open(path, 'rb') as fh:
+        compressed = zstandard.ZstdCompressor(level=3).compress(fh.read())
+
+    response = requests.post(
+        urljoin(BASE_URL, '/sign'),
+        headers={'Authorization': f'Bearer {TOKEN}'},
+        params={'keyid': KEYID},
+        data={'compression': 'zstd'},
+        files={'file': (path + '.zst', compressed)},
+    )
+    response.raise_for_status()
+    return response.text
+```
+
+For very large files, prefer **streaming** zstd compression to avoid loading the
+whole file into memory:
+
+```python
+import io, zstandard, requests
+
+def stream_compressed(path: str) -> bytes:
+    buf = io.BytesIO()
+    cctx = zstandard.ZstdCompressor(level=3)
+    with open(path, 'rb') as src, cctx.stream_writer(buf, closefd=False) as out:
+        for chunk in iter(lambda: src.read(1024 * 1024), b''):
+            out.write(chunk)
+    return buf.getvalue()
+```
+
+The same `compression=zstd` field works with `/sign-batch` — every file in the
+multipart must be zstd-compressed (the flag is per-request, not per-file).
+
+### When compression helps
+
+- **Text-like files** (configs, scripts, manifests, repodata): typically
+  compresses to 15–25% of the original — large win on the wire.
+- **Already-compressed files** (RPMs, `.gz`, `.xz`, `.zst`, images, most
+  binaries): roughly the same size or marginally smaller — small CPU cost for
+  no real benefit. Don't set `compression` for those.
+
 ## Sign file with clear signature
 ### Request
 ```bash

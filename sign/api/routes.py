@@ -1,7 +1,7 @@
 import logging
 from typing import List
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import PlainTextResponse
 
 from sign.api.dependencies import get_backend, get_current_user
@@ -19,6 +19,7 @@ from sign.db.helpers import get_user
 from sign.db.models import User
 from sign.errors import FileTooBigError, UserNotFoundError
 from sign.signing.backend import SigningBackend
+from sign.utils.compression import SUPPORTED_COMPRESSIONS, maybe_wrap
 
 router = APIRouter()
 
@@ -41,6 +42,7 @@ async def sign(
     file: UploadFile,
     sign_type: str = 'detach-sign',
     sign_algo: str = 'SHA256',
+    compression: str = Form(default=''),
     user: User = Depends(get_current_user),
     backend: SigningBackend = Depends(get_backend),
 ) -> str:
@@ -49,10 +51,18 @@ async def sign(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f'key {keyid} does not exist',
         )
+    if compression and compression not in SUPPORTED_COMPRESSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f'unsupported compression: {compression}; '
+                f'supported: {", ".join(SUPPORTED_COMPRESSIONS)}'
+            ),
+        )
     try:
         answer = await backend.sign(
             keyid,
-            file,
+            maybe_wrap(file, compression or None),
             detach_sign=sign_type == 'detach-sign',
             digest_algo=sign_algo,
         )
@@ -75,6 +85,7 @@ async def sign_batch(
     files: List[UploadFile] = File(...),
     sign_type: str = 'detach-sign',
     sign_algo: str = 'SHA256',
+    compression: str = Form(default=''),
     user: User = Depends(get_current_user),
     backend: SigningBackend = Depends(get_backend),
 ) -> BatchSignResponse:
@@ -109,15 +120,26 @@ async def sign_batch(
             detail=f'key {keyid} does not exist',
         )
 
+    if compression and compression not in SUPPORTED_COMPRESSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f'unsupported compression: {compression}; '
+                f'supported: {", ".join(SUPPORTED_COMPRESSIONS)}'
+            ),
+        )
+
     logging.info(
         "user %s initiated batch signing of %d files with key %s",
         user.email, len(files), keyid,
     )
 
+    wrapped = [maybe_wrap(f, compression or None) for f in files]
+
     try:
         results_data = await backend.sign_batch(
             keyid=keyid,
-            files=files,
+            files=wrapped,
             detach_sign=sign_type == 'detach-sign',
             digest_algo=sign_algo,
         )

@@ -18,6 +18,7 @@ setup(
         'psycopg2-binary >= 2.9.3',
         'alembic >= 1.13.1',
         'PyYAML >= 6.0',
+        'zstandard >= 0.22.0',
     ],
     extras_require={
         'kms': [
