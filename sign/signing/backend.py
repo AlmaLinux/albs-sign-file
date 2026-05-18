@@ -51,6 +51,18 @@ def get_signing_backend() -> SigningBackend:
     if backend_type == 'gpg':
         from sign.pgp import PGP
 
+        preloaded_passwords = None
+        if settings.bitwarden_enabled:
+            from sign.pgp.bitwarden import fetch_passphrases
+
+            preloaded_passwords = fetch_passphrases(
+                keyids=settings.pgp_keys,
+                username=settings.bitwarden_username,
+                password=settings.bitwarden_password,
+                password_file=settings.bitwarden_password_file,
+                collection_id=settings.bitwarden_collection_id,
+            )
+
         _backend_instance = GPGAdapter(
             PGP(
                 keyring=settings.keyring,
@@ -60,6 +72,7 @@ def get_signing_backend() -> SigningBackend:
                 pass_db_dev_pass=settings.pass_db_dev_pass,
                 max_upload_bytes=settings.max_upload_bytes,
                 tmp_dir=settings.tmp_dir,
+                preloaded_passwords=preloaded_passwords,
             )
         )
         logging.info("Using GPG signing backend")

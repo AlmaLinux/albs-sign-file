@@ -288,6 +288,48 @@ Each key in `kms.keys` requires:
 - `kms_id`: KMS key ID or alias (e.g., `alias/my-key` or full ARN)
 - `gpg_fingerprint`: The GPG fingerprint to embed in signatures (40 hex chars)
 
+### Fetching GPG passphrases from Bitwarden
+
+Instead of typing GPG key passphrases interactively (or setting
+`SF_PASS_DB_DEV_PASS` for development), the service can pull them from a
+Bitwarden vault at startup using
+[py-bitwarden-wrapper](https://github.com/AlmaLinux/py-bitwarden-wrapper).
+
+**Requirements:**
+1. The Bitwarden CLI (`bw`) must be installed and on `PATH`.
+2. Install the extra: `pip install ".[bitwarden]"`.
+3. For each GPG keyid listed in `SF_PGP_KEYS_ID` / `gpg.keys`, create a
+   Bitwarden login item whose **name equals the keyid** and whose
+   **password field** holds the passphrase.
+
+**Configuration (env):**
+
+```bash
+SF_BITWARDEN_ENABLED=True
+SF_BITWARDEN_USERNAME=signer@example.com
+# Either a master password env var...
+SF_BITWARDEN_PASSWORD="..."
+# ...or a path to a file containing it:
+SF_BITWARDEN_PASSWORD_FILE=/run/secrets/bw_master
+# Optional: restrict lookup to one collection
+SF_BITWARDEN_COLLECTION_ID=<uuid>
+```
+
+**Configuration (YAML):**
+
+```yaml
+bitwarden:
+  enabled: true
+  username: signer@example.com
+  password_file: /run/secrets/bw_master
+  collection_id: <uuid>
+```
+
+If `bitwarden.enabled` is true, fetched passphrases take precedence over
+both interactive prompts and `SF_PASS_DB_DEV_PASS`. Startup fails fast if
+any keyid is missing from the vault or its passphrase does not unlock the
+GPG key.
+
 ### Database initialization
 
 #### Database Configuration
