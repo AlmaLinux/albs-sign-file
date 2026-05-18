@@ -170,6 +170,26 @@ class Settings(BaseSettings):
         default=[],
         description="list of KMS keys with kms_id and gpg_fingerprint",
     )
+    bitwarden_enabled: bool = Field(
+        default=False,
+        description="fetch GPG key passphrases from Bitwarden",
+    )
+    bitwarden_username: Optional[str] = Field(
+        default=None,
+        description="Bitwarden account username/email",
+    )
+    bitwarden_password: Optional[str] = Field(
+        default=None,
+        description="Bitwarden master password (env-friendly)",
+    )
+    bitwarden_password_file: Optional[str] = Field(
+        default=None,
+        description="path to a file containing the Bitwarden master password",
+    )
+    bitwarden_collection_id: Optional[str] = Field(
+        default=None,
+        description="optional Bitwarden collection ID to restrict the lookup",
+    )
 
     def get_kms_key_ids(self) -> List[str]:
         """Get list of KMS key IDs from config."""
@@ -263,6 +283,19 @@ def create_settings() -> Settings:
         if 'keys' in kms:
             flat_config['kms_keys'] = kms['keys']
 
+    if 'bitwarden' in yaml_config:
+        bw = yaml_config['bitwarden']
+        if 'enabled' in bw:
+            flat_config['bitwarden_enabled'] = bw['enabled']
+        if 'username' in bw:
+            flat_config['bitwarden_username'] = bw['username']
+        if 'password' in bw:
+            flat_config['bitwarden_password'] = bw['password']
+        if 'password_file' in bw:
+            flat_config['bitwarden_password_file'] = bw['password_file']
+        if 'collection_id' in bw:
+            flat_config['bitwarden_collection_id'] = bw['collection_id']
+
     if 'max_upload_bytes' in yaml_config:
         flat_config['max_upload_bytes'] = yaml_config['max_upload_bytes']
     if 'tmp_dir' in yaml_config:
@@ -300,6 +333,11 @@ def create_settings() -> Settings:
         'SF_KMS_MAX_WORKERS': 'kms_max_workers',
         'SF_PASS_DB_DEV_MODE': 'pass_db_dev_mode',
         'SF_PASS_DB_DEV_PASS': 'pass_db_dev_pass',
+        'SF_BITWARDEN_ENABLED': 'bitwarden_enabled',
+        'SF_BITWARDEN_USERNAME': 'bitwarden_username',
+        'SF_BITWARDEN_PASSWORD': 'bitwarden_password',
+        'SF_BITWARDEN_PASSWORD_FILE': 'bitwarden_password_file',
+        'SF_BITWARDEN_COLLECTION_ID': 'bitwarden_collection_id',
     }
 
     for env_var, field_name in env_mapping.items():

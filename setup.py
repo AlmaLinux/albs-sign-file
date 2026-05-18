@@ -24,5 +24,8 @@ setup(
             'boto3 >= 1.26.0',
             'PGPy13 >= 0.6.1rc1',
         ],
+        'bitwarden': [
+            'bitwarden-wrapper >= 0.1.16',
+        ],
     },
 )
