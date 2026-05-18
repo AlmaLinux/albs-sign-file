@@ -1,5 +1,8 @@
 import getpass
+from typing import Dict, Optional
+
 import gnupg
+
 from sign.pgp.errors import ConfigurationError
 from sign.pgp.helpers import verify_pgp_key_password
 
@@ -7,7 +10,8 @@ from sign.pgp.helpers import verify_pgp_key_password
 class PGPPasswordDB(object):
     def __init__(self, gpg: gnupg.GPG, pgp_keys: list[str],
                  development_mode: bool = False,
-                 development_password: str = None):
+                 development_password: str = None,
+                 preloaded_passwords: Optional[Dict[str, str]] = None):
         """
         Password DB initialization.
         This structure stores GPG keys passwords
@@ -16,8 +20,16 @@ class PGPPasswordDB(object):
         ----------
         gpg : gnupg.GPG
             Gpg wrapper.
-        keyids : list of str
+        pgp_keys : list of str
             List of PGP keyids.
+        development_mode : bool
+            If True, use ``development_password`` for every key.
+        development_password : str
+            Single passphrase to use in development mode.
+        preloaded_passwords : dict, optional
+            Mapping of keyid -> passphrase fetched from an external source
+            (e.g. Bitwarden). Takes precedence over ``development_mode`` and
+            interactive prompting.
         """
         self.__gpg = gpg
         self.__keys = {keyid: {'password': ''} for keyid in pgp_keys}
@@ -27,16 +39,19 @@ class PGPPasswordDB(object):
                                      'mode')
         self.__development_mode = development_mode
         self.__development_password = development_password
+        self.__preloaded_passwords = preloaded_passwords or {}
 
     def ask_for_passwords(self):
         """
-        Asks a user for PGP private key passwords and stores them in the DB.
+        Populates the DB with PGP private key passphrases.
 
-        RaisesF
+        Source precedence: preloaded passwords (e.g. Bitwarden) >
+        development mode > interactive prompt.
+
+        Raises
         ------
-        castor.errors.ConfigurationError
-            If a private GPG key is not found or an entered password is
-            incorrect.
+        sign.pgp.errors.ConfigurationError
+            If a private GPG key is not found or a passphrase is incorrect.
         """
         existent_keys = {key["keyid"]: key
                          for key in self.__gpg.list_keys(True)}
@@ -47,7 +62,9 @@ class PGPPasswordDB(object):
                     "PGP key {0} is not found in the gnupg2 database "
                     "available keys {1}".format(keyid, str(existent_keys.keys()))
                 )
-            if self.__development_mode:
+            if keyid in self.__preloaded_passwords:
+                password = self.__preloaded_passwords[keyid]
+            elif self.__development_mode:
                 password = self.__development_password
             else:
                 password = getpass.getpass('\nPlease enter the {0} PGP key '
@@ -63,49 +80,10 @@ class PGPPasswordDB(object):
             ]
 
     def get_password(self, keyid):
-        """
-        Returns a password for the specified private PGP key.
-
-        Parameters
-        ----------
-        keyid : str
-            Private PGP key keyid.
-
-        Returns
-        -------
-        str
-            Password.
-        """
         return self.__keys[keyid]["password"]
 
     def get_fingerprint(self, keyid):
-        """
-        Returns a fingerprint for the specified private PGP key.
-
-        Parameters
-        ----------
-        keyid : str
-            Private PGP key keyid.
-
-        Returns
-        -------
-        str
-            fingerprint.
-        """
         return self.__keys[keyid]["fingerprint"]
 
     def get_subkeys(self, keyid):
-        """
-        Returns a list of subkey fingerprints.
-
-        Parameters
-        ----------
-        keyid : str
-            Private PGP key keyid.
-
-        Returns
-        -------
-        list
-            Subkey fingerprints.
-        """
         return self.__keys[keyid]["subkeys"]
