@@ -170,6 +170,15 @@ class Settings(BaseSettings):
         default=[],
         description="list of KMS keys with kms_id and gpg_fingerprint",
     )
+    yubikey_keyids: List[str] = Field(
+        default_factory=list,
+        description=(
+            "list of PGP keyIDs that are backed by a Yubikey. "
+            "Per-key serialization and gpg-agent restart are applied only "
+            "when signing with these keys."
+        ),
+        env="SF_YUBIKEY_KEYIDS",
+    )
 
     def get_kms_key_ids(self) -> List[str]:
         """Get list of KMS key IDs from config."""

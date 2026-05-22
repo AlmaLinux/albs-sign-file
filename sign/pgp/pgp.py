@@ -16,7 +16,11 @@ from sign.log import SysLog
 from sign.pgp.helpers import restart_gpg_agent
 from sign.pgp.pgp_password_db import PGPPasswordDB
 from sign.utils.hashing import get_hasher, hash_file
-from sign.utils.locking import exclusive_lock
+from sign.utils.locking import (
+    GPG_AGENT_LOCK_FILENAME,
+    exclusive_lock,
+    shared_lock,
+)
 
 
 class PGP:
@@ -46,6 +50,10 @@ class PGP:
 
     def key_exists(self, keyid: str) -> bool:
         return keyid in self.__pass_db._PGPPasswordDB__keys.keys()
+
+    @staticmethod
+    def _is_yubikey(keyid: str) -> bool:
+        return keyid in (settings.yubikey_keyids or [])
 
     async def sign(
         self,
@@ -89,15 +97,28 @@ class PGP:
                 keyid,
                 fd.name,
             ]
-            with exclusive_lock(settings.gpg_locks_dir, keyid):
-                out, status = pexpect.run(
-                    command=' '.join(sign_cmd.formulate()),
-                    events={"Enter passphrase:.*": "{0}\r".format(password)},
-                    env={"LC_ALL": "en_US.UTF-8"},
-                    timeout=1200,
-                    withexitstatus=1,
-                )
-                restart_gpg_agent()
+            is_yubikey = self._is_yubikey(keyid)
+            with shared_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
+                if is_yubikey:
+                    with exclusive_lock(settings.gpg_locks_dir, keyid):
+                        out, status = pexpect.run(
+                            command=' '.join(sign_cmd.formulate()),
+                            events={"Enter passphrase:.*": "{0}\r".format(password)},
+                            env={"LC_ALL": "en_US.UTF-8"},
+                            timeout=1200,
+                            withexitstatus=1,
+                        )
+                else:
+                    out, status = pexpect.run(
+                        command=' '.join(sign_cmd.formulate()),
+                        events={"Enter passphrase:.*": "{0}\r".format(password)},
+                        env={"LC_ALL": "en_US.UTF-8"},
+                        timeout=1200,
+                        withexitstatus=1,
+                    )
+            if is_yubikey:
+                with exclusive_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
+                    restart_gpg_agent()
             hash_after = hash_file(
                 fd.name,
                 hasher=get_hasher(),
@@ -158,7 +179,9 @@ class PGP:
                 fd.name,
             ]
 
-            # Use semaphore to protect GPG operation and agent restart
+            # Serialize pexpect calls within the process; cross-process
+            # coordination is handled by the shared/exclusive lock taken
+            # by the caller (sign_batch).
             if self.__gpg_semaphore is None:
                 self.__gpg_semaphore = asyncio.Semaphore(1)
             async with self.__gpg_semaphore:
@@ -169,7 +192,6 @@ class PGP:
                     timeout=1200,
                     withexitstatus=1,
                 )
-                restart_gpg_agent()
 
             hash_after = hash_file(fd.name, hasher=get_hasher())
             self.__syslog.sign_log(
@@ -224,18 +246,27 @@ class PGP:
             "Starting batch signing of %d files with key %s", len(files), keyid
         )
 
-        with exclusive_lock(settings.gpg_locks_dir, keyid):
-            tasks = [
-                self._sign_single_file_for_batch(
-                    keyid=keyid,
-                    file=file,
-                    detach_sign=detach_sign,
-                    digest_algo=digest_algo,
-                )
-                for file in files
-            ]
+        is_yubikey = self._is_yubikey(keyid)
+        tasks = [
+            self._sign_single_file_for_batch(
+                keyid=keyid,
+                file=file,
+                detach_sign=detach_sign,
+                digest_algo=digest_algo,
+            )
+            for file in files
+        ]
 
-            results = await asyncio.gather(*tasks)
+        with shared_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
+            if is_yubikey:
+                with exclusive_lock(settings.gpg_locks_dir, keyid):
+                    results = await asyncio.gather(*tasks)
+            else:
+                results = await asyncio.gather(*tasks)
+
+        if is_yubikey:
+            with exclusive_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
+                restart_gpg_agent()
 
         logging.info(
             "Batch signing completed successfully: %d files", len(results)
