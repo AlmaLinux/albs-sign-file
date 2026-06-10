@@ -1,17 +1,28 @@
 import logging
 import logging.handlers
+import os
+import sys
+
 
 class SysLog:
 
     def __init__(self, tag_name: str, level: int = logging.INFO):
         self._tag_name = tag_name
-        self._logger = logging.getLogger()
         self._level = level
+        self._logger = logging.getLogger('sign.audit')
         self._logger.setLevel(self._level)
-        formatter = logging.Formatter(self._tag_name + ': %(message)s')
-        handler = logging.handlers.SysLogHandler(address='/dev/log')
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
+        self._logger.propagate = False
+
+        if not self._logger.handlers:
+            formatter = logging.Formatter(self._tag_name + ': %(message)s')
+            handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+            if os.path.exists('/dev/log'):
+                handlers.append(
+                    logging.handlers.SysLogHandler(address='/dev/log')
+                )
+            for handler in handlers:
+                handler.setFormatter(formatter)
+                self._logger.addHandler(handler)
 
     def sign_log(
         self,
