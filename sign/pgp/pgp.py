@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import os
 from typing import List, Tuple
@@ -69,13 +70,17 @@ class PGP:
             dir=self.tmp_dir,
         ) as fd:
             # writing content to temp file
-            while content := await file.read(1024 * 1024):
-                upload_size += len(content)
-                if upload_size > self.max_upload_bytes:
-                    raise FileTooBigError
-                await fd.write(content)
-                await fd.flush()
-            file.file.close()
+            try:
+                while content := await file.read(1024 * 1024):
+                    upload_size += len(content)
+                    if upload_size > self.max_upload_bytes:
+                        raise FileTooBigError
+                    await fd.write(content)
+                    await fd.flush()
+            finally:
+                # Always release the UploadFile's spooled temp file/fd, even
+                # if the upload-size check aborts mid-read. See PF-673.
+                file.file.close()
 
             hash_before = hash_file(
                 fd.name,
@@ -139,15 +144,22 @@ class PGP:
                 hash_after,
                 keyid,
             )
-            if status != 0:
-                message = f'gpg failed to sign file, error: {out}'
-                logging.error(message)
-                raise Exception(message)
+            # gpg writes the signature to a separate '<name>.asc' file that the
+            # NamedTemporaryFile context manager does not track. Always remove
+            # it, including when signing failed and left a partial file behind,
+            # otherwise it leaks on disk on every error. See PF-673.
+            try:
+                if status != 0:
+                    message = f'gpg failed to sign file, error: {out}'
+                    logging.error(message)
+                    raise Exception(message)
 
-        # reading PGP signature
-        async with aiofiles.open(f'{fd.name}.asc', 'r') as fl:
-            answer = await fl.read()
-        await remove(f'{fd.name}.asc')
+                # reading PGP signature
+                async with aiofiles.open(f'{fd.name}.asc', 'r') as fl:
+                    answer = await fl.read()
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    await remove(f'{fd.name}.asc')
 
         return answer
 
@@ -163,13 +175,17 @@ class PGP:
         async with aiofiles.tempfile.NamedTemporaryFile(
             'wb', delete=True, dir=self.tmp_dir
         ) as fd:
-            while content := await file.read(1024 * 1024):
-                upload_size += len(content)
-                if upload_size > self.max_upload_bytes:
-                    raise FileTooBigError
-                await fd.write(content)
-                await fd.flush()
-            file.file.close()
+            try:
+                while content := await file.read(1024 * 1024):
+                    upload_size += len(content)
+                    if upload_size > self.max_upload_bytes:
+                        raise FileTooBigError
+                    await fd.write(content)
+                    await fd.flush()
+            finally:
+                # Always release the UploadFile's spooled temp file/fd, even
+                # if the upload-size check aborts mid-read. See PF-673.
+                file.file.close()
 
             hash_before = hash_file(fd.name, hasher=get_hasher())
 
@@ -212,13 +228,20 @@ class PGP:
                 keyid,
             )
 
-            if status != 0:
-                raise Exception(f'gpg failed to sign file, error: {out}')
+            # gpg writes the signature to a separate '<name>.asc' file that the
+            # NamedTemporaryFile context manager does not track. Always remove
+            # it, including when signing failed and left a partial file behind,
+            # otherwise it leaks on disk on every error. See PF-673.
+            try:
+                if status != 0:
+                    raise Exception(f'gpg failed to sign file, error: {out}')
 
-            async with aiofiles.open(f'{fd.name}.asc', 'r') as fl:
-                signature = await fl.read()
+                async with aiofiles.open(f'{fd.name}.asc', 'r') as fl:
+                    signature = await fl.read()
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    await remove(f'{fd.name}.asc')
 
-        await remove(f'{fd.name}.asc')
         return fd.name, signature
 
     async def _sign_single_file_for_batch(
