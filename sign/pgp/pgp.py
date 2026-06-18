@@ -203,9 +203,12 @@ class PGP:
                 fd.name,
             ]
 
-            # Serialize pexpect calls within the process; cross-process
-            # coordination is handled by the shared/exclusive lock taken
-            # by the caller (sign_batch).
+            # Serialize pexpect calls within the process. sign_batch already
+            # signs sequentially (PF-673), but this semaphore keeps
+            # _sign_batch_file safe if it is ever awaited concurrently, so
+            # only one gpg/pexpect invocation talks to the gpg-agent at a time.
+            # Cross-process coordination is handled by the shared/exclusive
+            # lock taken by the caller (sign_batch).
             if self.__gpg_semaphore is None:
                 self.__gpg_semaphore = asyncio.Semaphore(1)
             async with self.__gpg_semaphore:
@@ -269,10 +272,17 @@ class PGP:
         digest_algo: str = 'SHA256',
     ) -> List[Tuple[str, str]]:
         """
-        Sign multiple files asynchronously.
+        Sign multiple files, one at a time.
 
-        Uses exclusive_lock for cross-process protection and semaphore
-        for safe agent restarts within the process.
+        Uses exclusive_lock for cross-process protection.
+
+        Files are signed sequentially: gpg signing is serial anyway (a single
+        gpg-agent), so signing concurrently bought nothing while opening one
+        temp file (and one pexpect PTY) per file up front. On large batches
+        that pushed the open-fd count high enough to hit pexpect's select()
+        FD_SETSIZE limit. Signing one file at a time keeps at most one temp
+        file and one PTY open, so fd usage stays flat regardless of batch
+        size. See PF-673.
 
         Raises exception immediately if any file fails (fail-fast).
         """
@@ -281,22 +291,26 @@ class PGP:
         )
 
         is_yubikey = self._is_yubikey(keyid)
-        tasks = [
-            self._sign_single_file_for_batch(
-                keyid=keyid,
-                file=file,
-                detach_sign=detach_sign,
-                digest_algo=digest_algo,
-            )
-            for file in files
-        ]
+
+        async def _sign_all() -> List[Tuple[str, str]]:
+            signed = []
+            for file in files:
+                signed.append(
+                    await self._sign_single_file_for_batch(
+                        keyid=keyid,
+                        file=file,
+                        detach_sign=detach_sign,
+                        digest_algo=digest_algo,
+                    )
+                )
+            return signed
 
         with shared_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
             if is_yubikey:
                 with exclusive_lock(settings.gpg_locks_dir, keyid):
-                    results = await asyncio.gather(*tasks)
+                    results = await _sign_all()
             else:
-                results = await asyncio.gather(*tasks)
+                results = await _sign_all()
 
         if is_yubikey:
             with exclusive_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
