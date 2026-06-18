@@ -107,6 +107,10 @@ class PGP:
                             env={"LC_ALL": "en_US.UTF-8"},
                             timeout=1200,
                             withexitstatus=1,
+                            # poll() has no FD_SETSIZE (1024) limit, unlike
+                            # select(); required when the process holds many
+                            # open fds. See PF-673.
+                            use_poll=True,
                         )
                 else:
                     out, status = pexpect.run(
@@ -115,6 +119,10 @@ class PGP:
                         env={"LC_ALL": "en_US.UTF-8"},
                         timeout=1200,
                         withexitstatus=1,
+                        # poll() has no FD_SETSIZE (1024) limit, unlike
+                        # select(); required when the process holds many
+                        # open fds. See PF-673.
+                        use_poll=True,
                     )
             if is_yubikey:
                 with exclusive_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
@@ -191,6 +199,9 @@ class PGP:
                     env={"LC_ALL": "en_US.UTF-8"},
                     timeout=1200,
                     withexitstatus=1,
+                    # poll() has no FD_SETSIZE (1024) limit, unlike select();
+                    # required when the process holds many open fds. See PF-673.
+                    use_poll=True,
                 )
 
             hash_after = hash_file(fd.name, hasher=get_hasher())
