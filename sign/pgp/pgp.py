@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import os
 from typing import List, Tuple
@@ -69,13 +70,17 @@ class PGP:
             dir=self.tmp_dir,
         ) as fd:
             # writing content to temp file
-            while content := await file.read(1024 * 1024):
-                upload_size += len(content)
-                if upload_size > self.max_upload_bytes:
-                    raise FileTooBigError
-                await fd.write(content)
-                await fd.flush()
-            file.file.close()
+            try:
+                while content := await file.read(1024 * 1024):
+                    upload_size += len(content)
+                    if upload_size > self.max_upload_bytes:
+                        raise FileTooBigError
+                    await fd.write(content)
+                    await fd.flush()
+            finally:
+                # Always release the UploadFile's spooled temp file/fd, even
+                # if the upload-size check aborts mid-read. See PF-673.
+                file.file.close()
 
             hash_before = hash_file(
                 fd.name,
@@ -107,6 +112,10 @@ class PGP:
                             env={"LC_ALL": "en_US.UTF-8"},
                             timeout=1200,
                             withexitstatus=1,
+                            # poll() has no FD_SETSIZE (1024) limit, unlike
+                            # select(); required when the process holds many
+                            # open fds. See PF-673.
+                            use_poll=True,
                         )
                 else:
                     out, status = pexpect.run(
@@ -115,6 +124,10 @@ class PGP:
                         env={"LC_ALL": "en_US.UTF-8"},
                         timeout=1200,
                         withexitstatus=1,
+                        # poll() has no FD_SETSIZE (1024) limit, unlike
+                        # select(); required when the process holds many
+                        # open fds. See PF-673.
+                        use_poll=True,
                     )
             if is_yubikey:
                 with exclusive_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
@@ -131,15 +144,22 @@ class PGP:
                 hash_after,
                 keyid,
             )
-            if status != 0:
-                message = f'gpg failed to sign file, error: {out}'
-                logging.error(message)
-                raise Exception(message)
+            # gpg writes the signature to a separate '<name>.asc' file that the
+            # NamedTemporaryFile context manager does not track. Always remove
+            # it, including when signing failed and left a partial file behind,
+            # otherwise it leaks on disk on every error. See PF-673.
+            try:
+                if status != 0:
+                    message = f'gpg failed to sign file, error: {out}'
+                    logging.error(message)
+                    raise Exception(message)
 
-        # reading PGP signature
-        async with aiofiles.open(f'{fd.name}.asc', 'r') as fl:
-            answer = await fl.read()
-        await remove(f'{fd.name}.asc')
+                # reading PGP signature
+                async with aiofiles.open(f'{fd.name}.asc', 'r') as fl:
+                    answer = await fl.read()
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    await remove(f'{fd.name}.asc')
 
         return answer
 
@@ -155,13 +175,17 @@ class PGP:
         async with aiofiles.tempfile.NamedTemporaryFile(
             'wb', delete=True, dir=self.tmp_dir
         ) as fd:
-            while content := await file.read(1024 * 1024):
-                upload_size += len(content)
-                if upload_size > self.max_upload_bytes:
-                    raise FileTooBigError
-                await fd.write(content)
-                await fd.flush()
-            file.file.close()
+            try:
+                while content := await file.read(1024 * 1024):
+                    upload_size += len(content)
+                    if upload_size > self.max_upload_bytes:
+                        raise FileTooBigError
+                    await fd.write(content)
+                    await fd.flush()
+            finally:
+                # Always release the UploadFile's spooled temp file/fd, even
+                # if the upload-size check aborts mid-read. See PF-673.
+                file.file.close()
 
             hash_before = hash_file(fd.name, hasher=get_hasher())
 
@@ -179,9 +203,12 @@ class PGP:
                 fd.name,
             ]
 
-            # Serialize pexpect calls within the process; cross-process
-            # coordination is handled by the shared/exclusive lock taken
-            # by the caller (sign_batch).
+            # Serialize pexpect calls within the process. sign_batch already
+            # signs sequentially (PF-673), but this semaphore keeps
+            # _sign_batch_file safe if it is ever awaited concurrently, so
+            # only one gpg/pexpect invocation talks to the gpg-agent at a time.
+            # Cross-process coordination is handled by the shared/exclusive
+            # lock taken by the caller (sign_batch).
             if self.__gpg_semaphore is None:
                 self.__gpg_semaphore = asyncio.Semaphore(1)
             async with self.__gpg_semaphore:
@@ -191,6 +218,9 @@ class PGP:
                     env={"LC_ALL": "en_US.UTF-8"},
                     timeout=1200,
                     withexitstatus=1,
+                    # poll() has no FD_SETSIZE (1024) limit, unlike select();
+                    # required when the process holds many open fds. See PF-673.
+                    use_poll=True,
                 )
 
             hash_after = hash_file(fd.name, hasher=get_hasher())
@@ -201,13 +231,20 @@ class PGP:
                 keyid,
             )
 
-            if status != 0:
-                raise Exception(f'gpg failed to sign file, error: {out}')
+            # gpg writes the signature to a separate '<name>.asc' file that the
+            # NamedTemporaryFile context manager does not track. Always remove
+            # it, including when signing failed and left a partial file behind,
+            # otherwise it leaks on disk on every error. See PF-673.
+            try:
+                if status != 0:
+                    raise Exception(f'gpg failed to sign file, error: {out}')
 
-            async with aiofiles.open(f'{fd.name}.asc', 'r') as fl:
-                signature = await fl.read()
+                async with aiofiles.open(f'{fd.name}.asc', 'r') as fl:
+                    signature = await fl.read()
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    await remove(f'{fd.name}.asc')
 
-        await remove(f'{fd.name}.asc')
         return fd.name, signature
 
     async def _sign_single_file_for_batch(
@@ -235,10 +272,17 @@ class PGP:
         digest_algo: str = 'SHA256',
     ) -> List[Tuple[str, str]]:
         """
-        Sign multiple files asynchronously.
+        Sign multiple files, one at a time.
 
-        Uses exclusive_lock for cross-process protection and semaphore
-        for safe agent restarts within the process.
+        Uses exclusive_lock for cross-process protection.
+
+        Files are signed sequentially: gpg signing is serial anyway (a single
+        gpg-agent), so signing concurrently bought nothing while opening one
+        temp file (and one pexpect PTY) per file up front. On large batches
+        that pushed the open-fd count high enough to hit pexpect's select()
+        FD_SETSIZE limit. Signing one file at a time keeps at most one temp
+        file and one PTY open, so fd usage stays flat regardless of batch
+        size. See PF-673.
 
         Raises exception immediately if any file fails (fail-fast).
         """
@@ -247,22 +291,26 @@ class PGP:
         )
 
         is_yubikey = self._is_yubikey(keyid)
-        tasks = [
-            self._sign_single_file_for_batch(
-                keyid=keyid,
-                file=file,
-                detach_sign=detach_sign,
-                digest_algo=digest_algo,
-            )
-            for file in files
-        ]
+
+        async def _sign_all() -> List[Tuple[str, str]]:
+            signed = []
+            for file in files:
+                signed.append(
+                    await self._sign_single_file_for_batch(
+                        keyid=keyid,
+                        file=file,
+                        detach_sign=detach_sign,
+                        digest_algo=digest_algo,
+                    )
+                )
+            return signed
 
         with shared_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
             if is_yubikey:
                 with exclusive_lock(settings.gpg_locks_dir, keyid):
-                    results = await asyncio.gather(*tasks)
+                    results = await _sign_all()
             else:
-                results = await asyncio.gather(*tasks)
+                results = await _sign_all()
 
         if is_yubikey:
             with exclusive_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
