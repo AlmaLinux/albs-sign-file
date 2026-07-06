@@ -206,6 +206,28 @@ def create_settings() -> Settings:
     3. Default values
     """
     config_file = os.environ.get('SF_CONFIG_FILE', CONFIG_FILE_DEFAULT)
+    config_explicit = 'SF_CONFIG_FILE' in os.environ
+    config_path = os.path.expanduser(config_file)
+    config_exists = os.path.exists(config_path)
+
+    # An explicitly requested config file that is missing is always an
+    # error (protects against typos in SF_CONFIG_FILE).
+    if config_explicit and not config_exists:
+        raise RuntimeError(
+            f"SF_CONFIG_FILE points to {config_path!r}, which does not exist."
+        )
+
+    # Refuse to start with no configuration source at all. Without this
+    # guard, db_url silently falls back to a local SQLite file
+    # (DB_URL_DEFAULT), so destructive db_manage.py operations and the
+    # service itself would run against the wrong database instead of failing.
+    if not config_exists and 'SF_DB_URL' not in os.environ:
+        raise RuntimeError(
+            f"No configuration provided: config file {config_path!r} does "
+            "not exist and SF_DB_URL is not set. Set SF_CONFIG_FILE to a "
+            "valid config path or provide SF_DB_URL explicitly."
+        )
+
     yaml_config = load_yaml_config(config_file)
 
     flat_config = {}
