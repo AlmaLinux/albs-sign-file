@@ -208,6 +208,17 @@ Settings are loaded in this order (highest priority first):
 
 This allows keeping secrets (like `SF_JWT_SECRET_KEY`) in environment variables while having the rest in the YAML file.
 
+**Settings with no YAML equivalent (environment-only):**
+
+A few settings are read only from environment variables — they are ignored if
+placed in the YAML file:
+
+- `SF_PASS_DB_DEV_MODE` / `SF_PASS_DB_DEV_PASS` — development-mode passphrase
+  handling. Set these in the environment (or `.env`); there is no `config.yaml`
+  key for them.
+- `SF_HOST_GNUPG` — used only by `docker-compose.yml` to mount the host's
+  `.gnupg` directory; it is not a service setting.
+
 ### AWS KMS Backend Setup
 
 The KMS backend produces PGP-compatible signatures that can be verified with standard `gpg --verify` commands.
@@ -322,13 +333,23 @@ bitwarden:
   enabled: true
   username: signer@example.com
   password_file: /run/secrets/bw_master
-  collection_id: <uuid>
+  # collection_id: <uuid>   # optional — see note below
 ```
+
+`collection_id` is **optional**. If omitted, the whole vault is searched for
+items matching each keyid. If provided, it must be a real Bitwarden collection
+UUID — a placeholder string will make the lookup fail (it is passed straight to
+`bw list items --collectionid`). Either leave it out or set a valid UUID.
 
 If `bitwarden.enabled` is true, fetched passphrases take precedence over
 both interactive prompts and `SF_PASS_DB_DEV_PASS`. Startup fails fast if
 any keyid is missing from the vault or its passphrase does not unlock the
 GPG key.
+
+> **Note:** `bitwarden-wrapper` is not published on PyPI — the `[bitwarden]`
+> extra installs it directly from
+> [github.com/AlmaLinux/py-bitwarden-wrapper](https://github.com/AlmaLinux/py-bitwarden-wrapper).
+> The Bitwarden CLI (`bw`) must also be installed and on `PATH`.
 
 ### Database initialization
 

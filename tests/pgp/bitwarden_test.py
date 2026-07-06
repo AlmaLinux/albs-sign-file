@@ -25,11 +25,18 @@ class FakeContainer:
 
 @pytest.fixture
 def fake_bsbw(monkeypatch):
-    """Install a stub `bsbw` module so the fetcher can import it."""
-    module = types.ModuleType("bsbw")
-    module.BWCLIWrapper = MagicMock()
-    monkeypatch.setitem(sys.modules, "bsbw", module)
-    yield module
+    """Install a stub `bsbw.wrapper` module so the fetcher can import it.
+
+    Mirrors the real package layout: ``BWCLIWrapper`` lives in
+    ``bsbw.wrapper`` and is not re-exported from the package root.
+    """
+    package = types.ModuleType("bsbw")
+    wrapper = types.ModuleType("bsbw.wrapper")
+    wrapper.BWCLIWrapper = MagicMock()
+    package.wrapper = wrapper
+    monkeypatch.setitem(sys.modules, "bsbw", package)
+    monkeypatch.setitem(sys.modules, "bsbw.wrapper", wrapper)
+    yield wrapper
 
 
 def _import_fetcher():
@@ -107,8 +114,10 @@ def test_fetch_passphrases_empty_passphrase_treated_as_missing(fake_bsbw):
 
 
 def test_fetch_passphrases_without_bsbw_installed(monkeypatch):
-    # Ensure bsbw cannot be imported.
+    # Ensure bsbw cannot be imported (block both the package and the
+    # submodule the fetcher imports from).
     monkeypatch.setitem(sys.modules, "bsbw", None)
+    monkeypatch.setitem(sys.modules, "bsbw.wrapper", None)
 
     from sign.pgp.bitwarden import fetch_passphrases
     with pytest.raises(ConfigurationError, match="bitwarden-wrapper"):

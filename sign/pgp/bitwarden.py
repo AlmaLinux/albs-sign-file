@@ -19,7 +19,7 @@ def fetch_passphrases(
     collection_id: Optional[str] = None,
 ) -> Dict[str, str]:
     try:
-        from bsbw import BWCLIWrapper
+        from bsbw.wrapper import BWCLIWrapper
     except ImportError as e:
         raise ConfigurationError(
             "bitwarden-wrapper is not installed. "

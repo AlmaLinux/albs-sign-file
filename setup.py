@@ -25,7 +25,7 @@ setup(
             'PGPy13 >= 0.6.1rc1',
         ],
         'bitwarden': [
-            'bitwarden-wrapper >= 0.1.16',
+            'bitwarden-wrapper @ git+https://github.com/AlmaLinux/py-bitwarden-wrapper.git@0.1.17',
         ],
     },
 )
