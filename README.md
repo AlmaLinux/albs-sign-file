@@ -299,12 +299,22 @@ Each key in `kms.keys` requires:
 - `kms_id`: KMS key ID or alias (e.g., `alias/my-key` or full ARN)
 - `gpg_fingerprint`: The GPG fingerprint to embed in signatures (40 hex chars)
 
-### Fetching GPG passphrases from Bitwarden
+### Fetching GPG passphrases from a secret provider
 
 Instead of typing GPG key passphrases interactively (or setting
-`SF_PASS_DB_DEV_PASS` for development), the service can pull them from a
-Bitwarden vault at startup using
-[py-bitwarden-wrapper](https://github.com/AlmaLinux/py-bitwarden-wrapper).
+`SF_PASS_DB_DEV_PASS` for development), the service can pull them at startup
+from Bitwarden or from HashiCorp Vault.
+
+Only **one** provider may be enabled at a time — signing keys should have a
+single unambiguous source of truth, so enabling both is a configuration error
+rather than a fallback chain. Whichever provider is enabled takes precedence
+over both interactive prompts and `SF_PASS_DB_DEV_PASS`, and startup fails
+fast if any keyid is missing from it or its passphrase does not unlock the GPG
+key.
+
+#### Bitwarden
+
+Uses [py-bitwarden-wrapper](https://github.com/AlmaLinux/py-bitwarden-wrapper).
 
 **Requirements:**
 1. The Bitwarden CLI (`bw`) must be installed and on `PATH`.
@@ -341,15 +351,68 @@ items matching each keyid. If provided, it must be a real Bitwarden collection
 UUID — a placeholder string will make the lookup fail (it is passed straight to
 `bw list items --collectionid`). Either leave it out or set a valid UUID.
 
-If `bitwarden.enabled` is true, fetched passphrases take precedence over
-both interactive prompts and `SF_PASS_DB_DEV_PASS`. Startup fails fast if
-any keyid is missing from the vault or its passphrase does not unlock the
-GPG key.
-
 > **Note:** `bitwarden-wrapper` is not published on PyPI — the `[bitwarden]`
 > extra installs it directly from
 > [github.com/AlmaLinux/py-bitwarden-wrapper](https://github.com/AlmaLinux/py-bitwarden-wrapper).
 > The Bitwarden CLI (`bw`) must also be installed and on `PATH`.
+
+#### HashiCorp Vault
+
+Reads passphrases from a KV v2 store using
+[hvac](https://github.com/hvac/hvac).
+
+**Requirements:**
+1. Install the extra: `pip install ".[vault]"`.
+2. For each GPG keyid listed in `SF_PGP_KEYS_ID` / `gpg.keys`, create a secret
+   at `<mount>/<path_prefix>/<keyid>` holding the passphrase in the
+   `passphrase` field:
+
+```
+vault kv put secret/albs/sign-keys/7C3955C2A345DA89 passphrase='...'
+```
+
+**Configuration (env):**
+
+```bash
+SF_VAULT_ENABLED=True
+SF_VAULT_ADDR=https://vault.example.com:8200
+SF_VAULT_MOUNT=secret
+SF_VAULT_PATH_PREFIX=albs/sign-keys
+# Either a token env var...
+SF_VAULT_TOKEN="..."
+# ...or a path to a file containing it (preferred):
+SF_VAULT_TOKEN_FILE=/run/secrets/vault_token
+# ...or AppRole credentials:
+SF_VAULT_ROLE_ID=<uuid>
+SF_VAULT_SECRET_ID_FILE=/run/secrets/vault_secret_id
+# Optional
+SF_VAULT_NAMESPACE=admin/albs
+SF_VAULT_CA_CERT=/etc/pki/vault-ca.pem
+SF_VAULT_PASSPHRASE_FIELD=passphrase
+```
+
+**Configuration (YAML):**
+
+```yaml
+vault:
+  enabled: true
+  addr: https://vault.example.com:8200
+  mount: secret
+  path_prefix: albs/sign-keys
+  token_file: /run/secrets/vault_token
+  # role_id: <uuid>                        # AppRole instead of a token
+  # secret_id_file: /run/secrets/vault_secret_id
+  # namespace: admin/albs                  # Vault Enterprise / HCP
+  # ca_cert: /etc/pki/vault-ca.pem
+  # passphrase_field: passphrase           # for an existing secret layout
+```
+
+`VAULT_ADDR` and `VAULT_TOKEN` from the environment are used as a fallback when
+the corresponding options are unset, so a host already running a Vault agent
+needs no credentials in the config.
+
+Passphrases are read once at startup, so a short-lived token is sufficient and
+no Vault session is renewed while the service runs.
 
 ### Database initialization
 

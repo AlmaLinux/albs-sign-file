@@ -30,6 +30,8 @@ DB_ECHO_DEFAULT = False
 SIGNING_BACKEND_DEFAULT = "gpg"
 KMS_SIGNING_ALGORITHM_DEFAULT = "RSASSA_PKCS1_V1_5_SHA_256"
 KMS_MAX_WORKERS_DEFAULT = 10
+VAULT_MOUNT_DEFAULT = "secret"
+VAULT_FIELD_DEFAULT = "passphrase"
 CONFIG_FILE_DEFAULT = "/etc/sign-file/config.yaml"
 
 
@@ -199,6 +201,54 @@ class Settings(BaseSettings):
         default=None,
         description="optional Bitwarden collection ID to restrict the lookup",
     )
+    vault_enabled: bool = Field(
+        default=False,
+        description="fetch GPG key passphrases from HashiCorp Vault",
+    )
+    vault_addr: Optional[str] = Field(
+        default=None,
+        description="Vault address, e.g. https://vault.example.com:8200",
+    )
+    vault_token: Optional[str] = Field(
+        default=None,
+        description="Vault static token (env-friendly)",
+    )
+    vault_token_file: Optional[str] = Field(
+        default=None,
+        description="path to a file containing a Vault static token",
+    )
+    vault_role_id: Optional[str] = Field(
+        default=None,
+        description="Vault AppRole role id",
+    )
+    vault_secret_id: Optional[str] = Field(
+        default=None,
+        description="Vault AppRole secret id (env-friendly)",
+    )
+    vault_secret_id_file: Optional[str] = Field(
+        default=None,
+        description="path to a file containing a Vault AppRole secret id",
+    )
+    vault_namespace: Optional[str] = Field(
+        default=None,
+        description="Vault namespace (Vault Enterprise / HCP)",
+    )
+    vault_mount: str = Field(
+        default=VAULT_MOUNT_DEFAULT,
+        description="Vault KV v2 mount point",
+    )
+    vault_path_prefix: str = Field(
+        default='',
+        description="path prefix under the mount holding the key secrets",
+    )
+    vault_passphrase_field: str = Field(
+        default=VAULT_FIELD_DEFAULT,
+        description="secret field holding the passphrase",
+    )
+    vault_ca_cert: Optional[str] = Field(
+        default=None,
+        description="path to a CA bundle used to verify the Vault server",
+    )
 
     def get_kms_key_ids(self) -> List[str]:
         """Get list of KMS key IDs from config."""
@@ -327,6 +377,17 @@ def create_settings() -> Settings:
         if 'collection_id' in bw:
             flat_config['bitwarden_collection_id'] = bw['collection_id']
 
+    if 'vault' in yaml_config:
+        vault = yaml_config['vault']
+        yaml_keys = (
+            'enabled', 'addr', 'token', 'token_file', 'role_id', 'secret_id',
+            'secret_id_file', 'namespace', 'mount', 'path_prefix',
+            'passphrase_field', 'ca_cert',
+        )
+        for key in yaml_keys:
+            if key in vault:
+                flat_config[f'vault_{key}'] = vault[key]
+
     if 'max_upload_bytes' in yaml_config:
         flat_config['max_upload_bytes'] = yaml_config['max_upload_bytes']
     if 'tmp_dir' in yaml_config:
@@ -369,6 +430,18 @@ def create_settings() -> Settings:
         'SF_BITWARDEN_PASSWORD': 'bitwarden_password',
         'SF_BITWARDEN_PASSWORD_FILE': 'bitwarden_password_file',
         'SF_BITWARDEN_COLLECTION_ID': 'bitwarden_collection_id',
+        'SF_VAULT_ENABLED': 'vault_enabled',
+        'SF_VAULT_ADDR': 'vault_addr',
+        'SF_VAULT_TOKEN': 'vault_token',
+        'SF_VAULT_TOKEN_FILE': 'vault_token_file',
+        'SF_VAULT_ROLE_ID': 'vault_role_id',
+        'SF_VAULT_SECRET_ID': 'vault_secret_id',
+        'SF_VAULT_SECRET_ID_FILE': 'vault_secret_id_file',
+        'SF_VAULT_NAMESPACE': 'vault_namespace',
+        'SF_VAULT_MOUNT': 'vault_mount',
+        'SF_VAULT_PATH_PREFIX': 'vault_path_prefix',
+        'SF_VAULT_PASSPHRASE_FIELD': 'vault_passphrase_field',
+        'SF_VAULT_CA_CERT': 'vault_ca_cert',
     }
 
     for env_var, field_name in env_mapping.items():
