@@ -27,5 +27,8 @@ setup(
         'bitwarden': [
             'bitwarden-wrapper @ git+https://github.com/AlmaLinux/py-bitwarden-wrapper.git@0.1.17',
         ],
+        'vault': [
+            'hvac >= 2.0.0',
+        ],
     },
 )
