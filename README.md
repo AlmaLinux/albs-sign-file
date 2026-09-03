@@ -351,6 +351,85 @@ GPG key.
 > [github.com/AlmaLinux/py-bitwarden-wrapper](https://github.com/AlmaLinux/py-bitwarden-wrapper).
 > The Bitwarden CLI (`bw`) must also be installed and on `PATH`.
 
+### Fetching GPG passphrases from Google Secret Manager
+
+The passphrases can also be pulled from [Google Secret
+Manager](https://cloud.google.com/secret-manager) instead of Bitwarden.
+Unlike the Bitwarden provider this needs no CLI and keeps no local session
+state, which makes it the better fit when the service runs with several
+uvicorn/gunicorn workers.
+
+**Requirements:**
+1. Install the extra: `pip install ".[gsm]"`.
+2. For each GPG keyid listed in `SF_PGP_KEYS_ID` / `gpg.keys`, create a
+   secret whose **ID is the keyid** (optionally prefixed) and whose
+   **payload is the passphrase**:
+
+   ```bash
+   gcloud secrets create <keyid> --replication-policy=automatic
+   printf '%s' '<passphrase>' | \
+       gcloud secrets versions add <keyid> --data-file=-
+   ```
+
+   Use `printf` rather than `echo` so no trailing newline is stored. A
+   single trailing newline is stripped on read anyway; any other whitespace
+   is preserved.
+3. Grant the service account `roles/secretmanager.secretAccessor` on those
+   secrets.
+
+**Configuration (env):**
+
+```bash
+SF_GSM_ENABLED=True
+SF_GSM_PROJECT_ID=almalinux-signing
+# Optional: prefix prepended to the keyid to build the secret ID
+SF_GSM_SECRET_PREFIX=gpg-passphrase-
+# Optional: pin a version instead of 'latest'
+SF_GSM_SECRET_VERSION=latest
+# Optional: service account key file; omit to use Application Default
+# Credentials (workload identity / metadata server)
+SF_GSM_CREDENTIALS_FILE=/run/secrets/gsm-sa.json
+```
+
+**Configuration (YAML):**
+
+```yaml
+gsm:
+  enabled: true
+  project_id: almalinux-signing
+  # secret_prefix: gpg-passphrase-
+  # secret_version: latest
+  # credentials_file: /run/secrets/gsm-sa.json
+```
+
+Prefer Application Default Credentials over `credentials_file` when running
+on GCP — nothing secret has to land on disk. Startup fails fast if a secret
+is missing, if its payload is empty, or if the service account lacks
+`secretAccessor` (an IAM error is reported as such rather than being
+reported as a missing key).
+
+The secrets are read once per worker process during application startup,
+before the server accepts requests, so the blocking API call costs startup
+latency only. Each worker fetches independently — there is no shared state
+and nothing to serialize.
+
+### Choosing a passphrase provider
+
+`bitwarden.enabled` and `gsm.enabled` are mutually exclusive: both feed the
+same password DB, so enabling two would make the effective passphrase source
+depend on evaluation order. Enabling more than one is rejected at startup:
+
+```
+ValueError: Only one GPG passphrase provider may be enabled at a time,
+got: bitwarden, gsm
+```
+
+With no provider enabled the service falls back to `SF_PASS_DB_DEV_PASS`
+(development mode) or an interactive prompt, as before. Note that the
+interactive prompt is unusable with more than one worker process — every
+worker prompts on the same terminal — so a provider is effectively required
+for multi-worker deployments.
+
 ### Database initialization
 
 #### Database Configuration
