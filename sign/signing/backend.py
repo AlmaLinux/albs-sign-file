@@ -42,6 +42,43 @@ class SigningBackend(ABC):
 _backend_instance: Optional[SigningBackend] = None
 
 
+def _fetch_preloaded_passwords() -> Optional[dict]:
+    """Pull GPG passphrases from the configured secret provider, if any.
+
+    Returns ``None`` when no provider is enabled, leaving PGPPasswordDB to
+    fall back to development mode or an interactive prompt. Raises if more
+    than one provider is enabled.
+    """
+    provider = settings.get_secret_provider()
+
+    if provider is None:
+        return None
+
+    if provider == 'bitwarden':
+        from sign.pgp.bitwarden import fetch_passphrases
+
+        return fetch_passphrases(
+            keyids=settings.pgp_keys,
+            username=settings.bitwarden_username,
+            password=settings.bitwarden_password,
+            password_file=settings.bitwarden_password_file,
+            collection_id=settings.bitwarden_collection_id,
+        )
+
+    if provider == 'gsm':
+        from sign.pgp.gsm import fetch_passphrases
+
+        return fetch_passphrases(
+            keyids=settings.pgp_keys,
+            project_id=settings.gsm_project_id,
+            secret_prefix=settings.gsm_secret_prefix,
+            secret_version=settings.gsm_secret_version,
+            credentials_file=settings.gsm_credentials_file,
+        )
+
+    raise ValueError(f"Unknown GPG passphrase provider: {provider!r}")
+
+
 def get_signing_backend() -> SigningBackend:
     global _backend_instance
 
@@ -53,17 +90,7 @@ def get_signing_backend() -> SigningBackend:
     if backend_type == 'gpg':
         from sign.pgp import PGP
 
-        preloaded_passwords = None
-        if settings.bitwarden_enabled:
-            from sign.pgp.bitwarden import fetch_passphrases
-
-            preloaded_passwords = fetch_passphrases(
-                keyids=settings.pgp_keys,
-                username=settings.bitwarden_username,
-                password=settings.bitwarden_password,
-                password_file=settings.bitwarden_password_file,
-                collection_id=settings.bitwarden_collection_id,
-            )
+        preloaded_passwords = _fetch_preloaded_passwords()
 
         _backend_instance = GPGAdapter(
             PGP(

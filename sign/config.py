@@ -31,6 +31,12 @@ SIGNING_BACKEND_DEFAULT = "gpg"
 KMS_SIGNING_ALGORITHM_DEFAULT = "RSASSA_PKCS1_V1_5_SHA_256"
 KMS_MAX_WORKERS_DEFAULT = 10
 CONFIG_FILE_DEFAULT = "/etc/sign-file/config.yaml"
+GSM_SECRET_VERSION_DEFAULT = "latest"
+
+# Sources that can preload GPG key passphrases at startup. Exactly one
+# may be enabled: they all feed the same PGPPasswordDB, so enabling two
+# would make the effective passphrase source depend on evaluation order.
+SECRET_PROVIDERS = ('bitwarden', 'gsm')
 
 
 def load_yaml_config(config_path: str) -> dict:
@@ -199,6 +205,52 @@ class Settings(BaseSettings):
         default=None,
         description="optional Bitwarden collection ID to restrict the lookup",
     )
+    gsm_enabled: bool = Field(
+        default=False,
+        description="fetch GPG key passphrases from Google Secret Manager",
+    )
+    gsm_project_id: Optional[str] = Field(
+        default=None,
+        description="Google Cloud project ID holding the passphrase secrets",
+    )
+    gsm_secret_prefix: str = Field(
+        default="",
+        description="prefix prepended to the keyid to build the secret ID",
+    )
+    gsm_secret_version: str = Field(
+        default=GSM_SECRET_VERSION_DEFAULT,
+        description="Secret Manager version to access",
+    )
+    gsm_credentials_file: Optional[str] = Field(
+        default=None,
+        description=(
+            "path to a service account JSON key; when unset, Application "
+            "Default Credentials are used"
+        ),
+    )
+
+    def enabled_secret_providers(self) -> List[str]:
+        """Names of the passphrase providers currently switched on."""
+        return [
+            name for name in SECRET_PROVIDERS
+            if getattr(self, f'{name}_enabled', False)
+        ]
+
+    def get_secret_provider(self) -> Optional[str]:
+        """Return the single enabled passphrase provider, if any.
+
+        Raises
+        ------
+        ValueError
+            If more than one provider is enabled.
+        """
+        providers = self.enabled_secret_providers()
+        if len(providers) > 1:
+            raise ValueError(
+                "Only one GPG passphrase provider may be enabled at a time, "
+                "got: " + ", ".join(providers)
+            )
+        return providers[0] if providers else None
 
     def get_kms_key_ids(self) -> List[str]:
         """Get list of KMS key IDs from config."""
@@ -327,6 +379,19 @@ def create_settings() -> Settings:
         if 'collection_id' in bw:
             flat_config['bitwarden_collection_id'] = bw['collection_id']
 
+    if 'gsm' in yaml_config:
+        gsm = yaml_config['gsm']
+        if 'enabled' in gsm:
+            flat_config['gsm_enabled'] = gsm['enabled']
+        if 'project_id' in gsm:
+            flat_config['gsm_project_id'] = gsm['project_id']
+        if 'secret_prefix' in gsm:
+            flat_config['gsm_secret_prefix'] = gsm['secret_prefix']
+        if 'secret_version' in gsm:
+            flat_config['gsm_secret_version'] = gsm['secret_version']
+        if 'credentials_file' in gsm:
+            flat_config['gsm_credentials_file'] = gsm['credentials_file']
+
     if 'max_upload_bytes' in yaml_config:
         flat_config['max_upload_bytes'] = yaml_config['max_upload_bytes']
     if 'tmp_dir' in yaml_config:
@@ -369,6 +434,11 @@ def create_settings() -> Settings:
         'SF_BITWARDEN_PASSWORD': 'bitwarden_password',
         'SF_BITWARDEN_PASSWORD_FILE': 'bitwarden_password_file',
         'SF_BITWARDEN_COLLECTION_ID': 'bitwarden_collection_id',
+        'SF_GSM_ENABLED': 'gsm_enabled',
+        'SF_GSM_PROJECT_ID': 'gsm_project_id',
+        'SF_GSM_SECRET_PREFIX': 'gsm_secret_prefix',
+        'SF_GSM_SECRET_VERSION': 'gsm_secret_version',
+        'SF_GSM_CREDENTIALS_FILE': 'gsm_credentials_file',
     }
 
     for env_var, field_name in env_mapping.items():
@@ -379,7 +449,12 @@ def create_settings() -> Settings:
         import json
         flat_config['pgp_keys'] = json.loads(os.environ['SF_PGP_KEYS_ID'])
 
-    return Settings(**flat_config)
+    created = Settings(**flat_config)
+
+    # Fail at startup rather than at first backend initialization.
+    created.get_secret_provider()
+
+    return created
 
 
 settings = create_settings()

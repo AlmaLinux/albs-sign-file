@@ -27,5 +27,8 @@ setup(
         'bitwarden': [
             'bitwarden-wrapper @ git+https://github.com/AlmaLinux/py-bitwarden-wrapper.git@0.1.17',
         ],
+        'gsm': [
+            'google-cloud-secret-manager >= 2.16.0',
+        ],
     },
 )
