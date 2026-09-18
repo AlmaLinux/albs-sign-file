@@ -6,8 +6,12 @@
 """CloudLinux Build System PGP related utility functions."""
 
 import datetime
+
 import plumbum
 
+# Re-exported: the helper lives in sign.utils.gpg so that sign.rpm can use
+# it without importing the sign.pgp package (which imports sign.rpm).
+from sign.utils.gpg import restart_gpg_agent
 
 __all__ = [
     "init_gpg",
@@ -48,13 +52,6 @@ def scan_pgp_info_from_file(gpg, key_file):
         "uid": key["uids"][0],
         "date": datetime.date.fromtimestamp(float(key["date"])),
     }
-
-
-def restart_gpg_agent():
-    """
-    Restarts gpg-agent.
-    """
-    plumbum.local["gpgconf"]["--reload", "gpg-agent"].run(retcode=None)
 
 
 def verify_pgp_key_password(gpg, keyid, password):

@@ -5,7 +5,8 @@
 </picture>
 <br/><br/>
 
-Service for signing various text files using PGP
+Service for signing files with PGP, and for signing RPM package headers
+with keys that never leave the sign farm.
 
 ## Signing Backends
 
@@ -13,6 +14,10 @@ The service supports two signing backends:
 
 - **GPG** (default): Uses local GnuPG for signing operations
 - **AWS KMS**: Uses AWS Key Management Service with PGP-compatible signature output
+
+RPM header signing (`/sign-rpm`) is available on the GPG backend only:
+`rpmsign` drives a local gpg with the private key in its keyring, which the
+KMS backend does not provide. The endpoint answers 501 on a KMS deployment.
 
 ## Installation
 
@@ -112,6 +117,25 @@ SF_DB_URL="sqlite:///./sign-file.sqlite3"
 # default ""
 SF_HOST_GNUPG="~/.gnupg"
 
+# SF_RPM_SIGN_ENABLED - enable the /sign-rpm endpoint
+# default True
+#
+# SF_MAX_RPM_UPLOAD_BYTES - max size of an RPM submitted to /sign-rpm
+# default: falls back to SF_MAX_UPLOAD_BYTES
+#
+# SF_RPM_SIGN_MAX_CONCURRENCY - rpmsign runs at once per process
+# default 2
+#
+# SF_RPM_SIGN_TIMEOUT - seconds to wait for one rpmsign run
+# default 1200
+#
+# SF_RPMSIGN_BINARY / SF_RPM_BINARY - paths to rpmsign / rpm
+# default "rpmsign" / "rpm"
+#
+# SF_DEFAULT_KEY_ACCESS - what a user with no key grants may sign with,
+# "all" or "none"
+# default "all"
+
 # SF_ROOT_URL root URL for API calls
 # default ""
 # NOTE:
@@ -162,6 +186,22 @@ gpg:
   keys:
     - AAAA1111BBBB2222
     - CCCC3333DDDD4444
+
+# RPM header signing (/sign-rpm), GPG backend only
+rpm_sign:
+  enabled: true
+  # falls back to the global max_upload_bytes when unset
+  max_upload_bytes: 200000000
+  # rpmsign invocations this process runs at once
+  max_concurrency: 2
+  timeout: 1200
+  rpmsign_binary: rpmsign
+  rpm_binary: rpm
+
+# What a user with no explicit key grants may sign with: 'all' or 'none'.
+# Set to 'none' on a service external callers can reach, then grant keys
+# with `db_manage.py key_grant`.
+default_key_access: all
 
 # AWS KMS backend configuration
 kms:
@@ -537,9 +577,12 @@ SWAGGER API documentation available at `/docs` endpoint
 | `/ping` | GET | Health check |
 | `/sign` | POST | Sign a single file |
 | `/sign-batch` | POST | Sign multiple files |
+| `/sign-rpm` | POST | Sign an RPM/SRPM header, returns the signed package |
+| `/keys` | GET | List the keys the caller may sign with |
 | `/token` | POST | Get JWT access token |
 
-All signing endpoints work with both GPG and KMS backends. The `keyid` parameter accepts:
+File signing endpoints work with both GPG and KMS backends; `/sign-rpm`
+requires the GPG backend. The `keyid` parameter accepts:
 - For GPG: Key fingerprint (e.g., `AAAA1111BBBB2222`)
 - For KMS: Key ID or alias (e.g., `alias/my-key`)
 
@@ -548,6 +591,155 @@ All signing endpoints work with both GPG and KMS backends. The `keyid` parameter
 The service includes a `/sign-batch` endpoint for signing multiple files in a single request. Files are processed asynchronously with I/O operations parallelized. For the GPG backend, exclusive locks and semaphores ensure safe GPG agent operation. For the KMS backend, concurrent signing is managed via a thread pool.
 
 **Note:** The endpoint uses fail-fast behavior - if any file fails to sign, the entire batch operation fails immediately.
+
+## RPM Header Signing Endpoint
+
+`POST /sign-rpm` signs the header of an RPM or SRPM that this build system
+did not build, and returns the same package with the signature in place.
+The private key stays on the sign node: the caller uploads a package and
+gets a package back, never key material.
+
+The package is signed exactly the way the build system signs its own
+artifacts — any signature already on the package is dropped with
+`rpmsign --delsign`, then the package is re-signed with
+`rpmsign --rpmv3 --resign -D '_gpg_name <keyid>'`. Only the signature
+header changes; the payload is byte-identical to what was submitted.
+
+### Request
+
+| Parameter | In | Description |
+|-----------|-----|-------------|
+| `keyid` | query | Key to sign with. The caller must be entitled to it. |
+| `file` | multipart form | The `.rpm` or `.src.rpm` to sign. |
+
+```bash
+curl -X POST \
+  'http://localhost:8000/sign-rpm?keyid=AAAA1111BBBB2222' \
+  -H "Authorization: Bearer ${SIGN_TOKEN}" \
+  -F 'file=@example-tool-1.2.0-1.el9.x86_64.rpm' \
+  --fail-with-body \
+  -o signed/example-tool-1.2.0-1.el9.x86_64.rpm
+```
+
+The response is the signed package as `application/x-rpm`, with the
+submitted filename echoed back in `Content-Disposition` (reduced to a
+basename). One package per request: there is no batch form, so a release
+of several packages signs them one at a time and each one succeeds or
+fails on its own.
+
+### Verifying the result
+
+```bash
+# the key must be imported first, e.g. from the published keyring
+rpm --import RPM-GPG-KEY-Example
+rpm -K signed/example-tool-1.2.0-1.el9.x86_64.rpm
+# example-tool-1.2.0-1.el9.x86_64.rpm: digests signatures OK
+```
+
+`rpm -qi <pkg>` shows the signing key id under `Signature`. The service
+performs this check itself before returning: if `rpmsign` exits 0 without
+leaving a signature from the requested key, the request fails rather than
+returning a package the caller would have to re-check.
+
+Note that the signature format depends on the rpm version on the signing
+host. Above rpm 4.14.3 the service passes `--rpmv3`, so the package
+carries a V3 header signature alongside the V4 one and verifies on older
+consumers too.
+
+### Authorization
+
+The endpoint uses the same JWT as the rest of the API (see
+[Get access token](#get-access-token)). On top of that, a caller can only
+sign with the keys it was granted:
+
+```bash
+python3 db_manage.py key_grant    # email + key id
+python3 db_manage.py key_list     # keys granted to a user
+python3 db_manage.py key_revoke   # withdraw a grant
+```
+
+Once a user has any grant they are restricted to those keys, on every
+signing endpoint. A user with no grants falls back to `default_key_access`:
+
+- `all` (default) — may sign with any key the service holds. This is the
+  historical behaviour, so existing deployments are unchanged by an
+  upgrade.
+- `none` — may sign with nothing until keys are granted explicitly. Set
+  this on a service that external callers can reach.
+
+`GET /keys` tells a caller which keys it may use:
+
+```json
+{"keys": ["AAAA1111BBBB2222"], "restricted": true, "rpm_signing_available": true}
+```
+
+### Audit trail
+
+Every request that can reach a private key writes a row to
+`sign_audit_records` **before** signing starts, and the row is updated with
+the outcome afterwards. If the row cannot be written, the request is
+refused with 503 rather than signed unaccounted for.
+
+| Column | Contents |
+|--------|----------|
+| `created_at`, `finished_at` | when the request arrived and finished |
+| `user_email`, `user_id` | the caller |
+| `keyid` | the key used |
+| `filename`, `package_nevra` | the package identity |
+| `sha256_before`, `sha256_after` | the package before and after signing |
+| `signature` | what `rpm` reports for the signed package |
+| `status` | `started`, `signed`, `rejected` or `failed` |
+| `detail` | why a request was rejected or failed |
+
+The same information also goes to syslog, alongside the existing file
+signing audit lines.
+
+### Limits and failure behaviour
+
+| Limit | Setting | Default |
+|-------|---------|---------|
+| Package size | `rpm_sign.max_upload_bytes` (falls back to `max_upload_bytes`) | 100 MB |
+| Concurrent `rpmsign` runs per process | `rpm_sign.max_concurrency` | 2 |
+| Time for one `rpmsign` run | `rpm_sign.timeout` | 1200 s |
+
+Signing is serialized across the whole host by the gpg-agent lock that the
+sign slaves also take, so an external caller cannot sign in parallel with
+release signing; `max_concurrency` caps how much of that queue one service
+process can occupy. Size a client's retry budget accordingly: during a
+large release, requests wait rather than fail.
+
+| Situation | Response |
+|-----------|----------|
+| Key does not exist on this service | `400` |
+| Upload is not an RPM package | `400` |
+| Caller is not entitled to the key | `403` |
+| Package is larger than the limit | `413` |
+| KMS backend (no local key for `rpmsign`) | `501` |
+| Signing disabled (`rpm_sign.enabled: false`) | `503` |
+| Audit trail not writable | `503`, `Retry-After: 30` |
+| `rpmsign` or the gpg agent failed | `503`, `Retry-After: 30` |
+
+A `503` means the request is worth retrying unchanged; `4xx` means the
+request itself has to change. The failure reason is recorded in the audit
+trail and the service log — the response body stays generic, so a caller
+never learns anything about the farm's internal state. A failed request
+never returns a partially signed package: the temporary copy is removed
+and nothing is written back to the caller.
+
+### Requirements on the signing host
+
+- `rpmsign` must be installed: `dnf install rpm-sign`.
+- The key must be in the gpg keyring the service was started with, and
+  listed under `gpg.keys` so its passphrase is loaded at startup.
+- gpg must be configured for loopback pinentry, the way the sign nodes
+  already are — `pinentry-mode loopback` in `gpg.conf` and
+  `allow-loopback-pinentry` in `gpg-agent.conf`. `rpmsign` shells out to
+  gpg without `--pinentry-mode`, so without this gpg tries to open a
+  pinentry dialog and the signature fails with `Required environment
+  variable not set`.
+- The database must be migrated to at least revision `002`
+  (`python3 db_manage.py migrate_upgrade`), which adds the key grant and
+  audit tables.
 
 # Basic usage
 

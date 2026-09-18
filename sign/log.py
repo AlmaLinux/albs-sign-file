@@ -1,6 +1,7 @@
 import logging
 import logging.handlers
 
+
 class SysLog:
 
     def __init__(self, tag_name: str, level: int = logging.INFO):
@@ -24,6 +25,33 @@ class SysLog:
             'Filename: %s. Hash before: %s. '
             'Hash after: %s. Sign key ID: %s',
             file_name,
+            hash_before,
+            hash_after,
+            pgp_keyid,
+        )
+
+    def rpm_sign_log(
+        self,
+        user_email: str,
+        file_name: str,
+        package_nevra: str,
+        hash_before: str,
+        hash_after: str,
+        pgp_keyid: str,
+    ):
+        """
+        Audit line for an RPM header signing request.
+
+        Carries the caller alongside the package identity: unlike file
+        signing, this path is reachable by callers outside the build
+        system, so the syslog trail has to say who asked.
+        """
+        self._logger.info(
+            'RPM header sign. User: %s. Filename: %s. Package: %s. '
+            'Hash before: %s. Hash after: %s. Sign key ID: %s',
+            user_email,
+            file_name,
+            package_nevra,
             hash_before,
             hash_after,
             pgp_keyid,

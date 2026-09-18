@@ -39,3 +39,11 @@ class BatchSignResponse(BaseModel):
     results: List[FileSignResult]
     total: int
     successful: int
+
+
+class KeysResponse(BaseModel):
+    """Keys the authenticated caller may sign with, and what it can do."""
+
+    keys: List[str]
+    restricted: bool
+    rpm_signing_available: bool

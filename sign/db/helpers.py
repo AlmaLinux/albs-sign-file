@@ -1,13 +1,15 @@
+import logging
 import re
 from contextlib import contextmanager
+from typing import List, Optional
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from sign.auth.hash import get_hash
 from sign.config import settings
-from sign.db.models import Base, User
-from sign.errors import UserNotFoundError
+from sign.db.models import Base, SignAuditRecord, User, UserKey, utcnow
+from sign.errors import AuditWriteError, UserNotFoundError
 
 
 def create_database_engine():
@@ -173,7 +175,155 @@ def update_password(email: str, password: str):
 
 def delete_user(email: str):
     with get_session() as session:
-        row_count = session.query(User).filter(User.email == email).delete()
-        if row_count == 0:
+        user = session.query(User).filter(User.email == email).first()
+        if not user:
             raise UserNotFoundError
+        # SQLite does not enforce foreign keys unless asked to, so the
+        # ON DELETE CASCADE on user_keys cannot be relied on here.
+        session.query(UserKey).filter(UserKey.user_id == user.id).delete()
+        session.delete(user)
         session.commit()
+
+
+def list_user_keys(email: str) -> List[str]:
+    """Key ids explicitly granted to a user (empty list means no grants)."""
+    with get_session() as session:
+        user = session.query(User).filter(User.email == email).first()
+        if not user:
+            raise UserNotFoundError
+        rows = (
+            session.query(UserKey.keyid)
+            .filter(UserKey.user_id == user.id)
+            .order_by(UserKey.keyid)
+            .all()
+        )
+        return [row[0] for row in rows]
+
+
+def grant_key(email: str, keyid: str) -> bool:
+    """
+    Allow a user to sign with ``keyid``.
+
+    Returns False when the grant already existed.
+    """
+    with get_session() as session:
+        user = session.query(User).filter(User.email == email).first()
+        if not user:
+            raise UserNotFoundError
+        existing = (
+            session.query(UserKey)
+            .filter(UserKey.user_id == user.id, UserKey.keyid == keyid)
+            .first()
+        )
+        if existing:
+            return False
+        session.add(UserKey(user_id=user.id, keyid=keyid))
+        session.commit()
+        return True
+
+
+def revoke_key(email: str, keyid: str) -> bool:
+    """
+    Withdraw a user's permission to sign with ``keyid``.
+
+    Returns False when there was no such grant. Revoking the last grant
+    puts the user back on ``settings.default_key_access``.
+    """
+    with get_session() as session:
+        user = session.query(User).filter(User.email == email).first()
+        if not user:
+            raise UserNotFoundError
+        row_count = (
+            session.query(UserKey)
+            .filter(UserKey.user_id == user.id, UserKey.keyid == keyid)
+            .delete()
+        )
+        session.commit()
+        return row_count > 0
+
+
+def user_can_sign_with(user: User, keyid: str) -> bool:
+    """
+    Whether ``user`` may sign with ``keyid``.
+
+    Explicit grants win: once a user has any, they are limited to those
+    keys. With no grants the answer comes from
+    ``settings.default_key_access``.
+    """
+    with get_session() as session:
+        granted = {
+            row[0]
+            for row in session.query(UserKey.keyid)
+            .filter(UserKey.user_id == user.id)
+            .all()
+        }
+    if granted:
+        return keyid in granted
+    return settings.default_key_access == 'all'
+
+
+def start_sign_audit(
+    operation: str,
+    user_id: Optional[int],
+    user_email: str,
+    keyid: str,
+    filename: Optional[str] = None,
+) -> int:
+    """
+    Open an audit record for a signing request and return its id.
+
+    Raises ``AuditWriteError`` if the record cannot be written: a request
+    that cannot be accounted for must not reach a private key.
+    """
+    record = SignAuditRecord(
+        operation=operation,
+        user_id=user_id,
+        user_email=user_email,
+        keyid=keyid,
+        filename=filename,
+        status='started',
+    )
+    try:
+        with get_session() as session:
+            session.add(record)
+            session.commit()
+            return record.id
+    except Exception as exc:
+        raise AuditWriteError(str(exc)) from exc
+
+
+def finish_sign_audit(
+    record_id: int,
+    status: str,
+    package_nevra: Optional[str] = None,
+    sha256_before: Optional[str] = None,
+    sha256_after: Optional[str] = None,
+    signature: Optional[str] = None,
+    detail: Optional[str] = None,
+):
+    """
+    Close the audit record opened by :func:`start_sign_audit`.
+
+    Never raises: the package is already signed by this point, so a failure
+    to update the row is logged (the 'started' row and the syslog entry
+    remain) instead of turning a successful signature into an error.
+    """
+    values = {
+        'status': status,
+        'finished_at': utcnow(),
+        'package_nevra': package_nevra,
+        'sha256_before': sha256_before,
+        'sha256_after': sha256_after,
+        'signature': signature,
+        'detail': detail,
+    }
+    try:
+        with get_session() as session:
+            session.query(SignAuditRecord).filter(
+                SignAuditRecord.id == record_id
+            ).update(values)
+            session.commit()
+    except Exception:
+        logging.exception(
+            'Failed to close audit record %s (status %s)', record_id, status
+        )
