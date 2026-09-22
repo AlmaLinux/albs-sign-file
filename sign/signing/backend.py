@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 from fastapi import UploadFile
 
 from sign.config import settings
+from sign.rpm.rpm_sign import RpmSignOutcome
 
 
 class SigningBackend(ABC):
@@ -37,6 +38,25 @@ class SigningBackend(ABC):
         raw_signature: bool = False,
     ) -> List[Tuple[str, str]]:
         pass
+
+    def supports_rpm_signing(self) -> bool:
+        """
+        Whether this backend can sign RPM headers.
+
+        ``rpmsign`` drives a local gpg with the private key in its keyring,
+        so only backends that hold the key that way can do it.
+        """
+        return False
+
+    async def sign_rpm(
+        self,
+        keyid: str,
+        file: UploadFile,
+        user_email: str = '',
+    ) -> RpmSignOutcome:
+        raise NotImplementedError(
+            'RPM header signing is not supported by this backend'
+        )
 
 
 _backend_instance: Optional[SigningBackend] = None
@@ -161,6 +181,21 @@ class GPGAdapter(SigningBackend):
             files=files,
             detach_sign=detach_sign,
             digest_algo=digest_algo,
+        )
+
+    def supports_rpm_signing(self) -> bool:
+        return True
+
+    async def sign_rpm(
+        self,
+        keyid: str,
+        file: UploadFile,
+        user_email: str = '',
+    ) -> RpmSignOutcome:
+        return await self._pgp.sign_rpm(
+            keyid=keyid,
+            file=file,
+            user_email=user_email,
         )
 
 

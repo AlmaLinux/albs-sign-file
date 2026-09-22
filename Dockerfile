@@ -3,7 +3,9 @@ FROM almalinux/9-base:latest AS sign-file
 RUN <<EOT
   set -ex
   dnf upgrade -y
-  dnf install -y pinentry
+  # rpm-sign provides rpmsign, used by the /sign-rpm endpoint to sign
+  # package headers.
+  dnf install -y pinentry rpm-sign
   dnf clean all
 EOT
 

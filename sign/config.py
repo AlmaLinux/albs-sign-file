@@ -2,7 +2,7 @@ import logging
 import os
 from typing import Dict, List, Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,12 @@ SIGNING_BACKEND_DEFAULT = "gpg"
 KMS_SIGNING_ALGORITHM_DEFAULT = "RSASSA_PKCS1_V1_5_SHA_256"
 KMS_MAX_WORKERS_DEFAULT = 10
 CONFIG_FILE_DEFAULT = "/etc/sign-file/config.yaml"
+RPM_SIGN_ENABLED_DEFAULT = True
+RPM_SIGN_MAX_CONCURRENCY_DEFAULT = 2
+RPM_SIGN_TIMEOUT_DEFAULT = 1200
+RPMSIGN_BINARY_DEFAULT = "rpmsign"
+RPM_BINARY_DEFAULT = "rpm"
+DEFAULT_KEY_ACCESS_DEFAULT = "all"
 
 
 def load_yaml_config(config_path: str) -> dict:
@@ -199,6 +205,63 @@ class Settings(BaseSettings):
         default=None,
         description="optional Bitwarden collection ID to restrict the lookup",
     )
+    rpm_sign_enabled: bool = Field(
+        default=RPM_SIGN_ENABLED_DEFAULT,
+        description=(
+            "enable the RPM header signing endpoint (GPG backend only)"
+        ),
+    )
+    rpm_sign_max_concurrency: int = Field(
+        default=RPM_SIGN_MAX_CONCURRENCY_DEFAULT,
+        description=(
+            "max rpmsign invocations this process runs at once. Signing is "
+            "serialized by the gpg-agent lock across processes anyway; this "
+            "caps how much release signing an external caller can crowd out."
+        ),
+    )
+    rpm_sign_timeout: int = Field(
+        default=RPM_SIGN_TIMEOUT_DEFAULT,
+        description="seconds to wait for a single rpmsign invocation",
+    )
+    rpmsign_binary: str = Field(
+        default=RPMSIGN_BINARY_DEFAULT,
+        description="path to the rpmsign binary",
+    )
+    rpm_binary: str = Field(
+        default=RPM_BINARY_DEFAULT,
+        description="path to the rpm binary (used to read signatures back)",
+    )
+    max_rpm_upload_bytes: Optional[int] = Field(
+        default=None,
+        description=(
+            "max size in bytes of an RPM submitted for header signing. "
+            "Falls back to max_upload_bytes when unset."
+        ),
+    )
+    default_key_access: str = Field(
+        default=DEFAULT_KEY_ACCESS_DEFAULT,
+        description=(
+            "what a user with no explicit key grants may sign with: "
+            "'all' (any key the service holds) or 'none' (nothing until "
+            "keys are granted). Users with explicit grants are always "
+            "limited to those keys."
+        ),
+    )
+
+    @field_validator('default_key_access')
+    @classmethod
+    def _check_default_key_access(cls, value: str) -> str:
+        if value not in ('all', 'none'):
+            raise ValueError(
+                "default_key_access must be 'all' or 'none', "
+                f"got {value!r}"
+            )
+        return value
+
+    @property
+    def rpm_upload_limit(self) -> int:
+        """Size limit applied to RPM uploads."""
+        return self.max_rpm_upload_bytes or self.max_upload_bytes
 
     def get_kms_key_ids(self) -> List[str]:
         """Get list of KMS key IDs from config."""
@@ -327,6 +390,26 @@ def create_settings() -> Settings:
         if 'collection_id' in bw:
             flat_config['bitwarden_collection_id'] = bw['collection_id']
 
+    if 'rpm_sign' in yaml_config:
+        rpm_sign = yaml_config['rpm_sign']
+        if 'enabled' in rpm_sign:
+            flat_config['rpm_sign_enabled'] = rpm_sign['enabled']
+        if 'max_concurrency' in rpm_sign:
+            flat_config['rpm_sign_max_concurrency'] = (
+                rpm_sign['max_concurrency']
+            )
+        if 'timeout' in rpm_sign:
+            flat_config['rpm_sign_timeout'] = rpm_sign['timeout']
+        if 'rpmsign_binary' in rpm_sign:
+            flat_config['rpmsign_binary'] = rpm_sign['rpmsign_binary']
+        if 'rpm_binary' in rpm_sign:
+            flat_config['rpm_binary'] = rpm_sign['rpm_binary']
+        if 'max_upload_bytes' in rpm_sign:
+            flat_config['max_rpm_upload_bytes'] = rpm_sign['max_upload_bytes']
+
+    if 'default_key_access' in yaml_config:
+        flat_config['default_key_access'] = yaml_config['default_key_access']
+
     if 'max_upload_bytes' in yaml_config:
         flat_config['max_upload_bytes'] = yaml_config['max_upload_bytes']
     if 'tmp_dir' in yaml_config:
@@ -369,6 +452,13 @@ def create_settings() -> Settings:
         'SF_BITWARDEN_PASSWORD': 'bitwarden_password',
         'SF_BITWARDEN_PASSWORD_FILE': 'bitwarden_password_file',
         'SF_BITWARDEN_COLLECTION_ID': 'bitwarden_collection_id',
+        'SF_RPM_SIGN_ENABLED': 'rpm_sign_enabled',
+        'SF_RPM_SIGN_MAX_CONCURRENCY': 'rpm_sign_max_concurrency',
+        'SF_RPM_SIGN_TIMEOUT': 'rpm_sign_timeout',
+        'SF_RPMSIGN_BINARY': 'rpmsign_binary',
+        'SF_RPM_BINARY': 'rpm_binary',
+        'SF_MAX_RPM_UPLOAD_BYTES': 'max_rpm_upload_bytes',
+        'SF_DEFAULT_KEY_ACCESS': 'default_key_access',
     }
 
     for env_var, field_name in env_mapping.items():

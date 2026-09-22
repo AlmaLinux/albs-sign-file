@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import tempfile
 from typing import List, Tuple
 
 import aiofiles
@@ -16,6 +17,12 @@ from sign.errors import FileTooBigError
 from sign.log import SysLog
 from sign.pgp.helpers import restart_gpg_agent
 from sign.pgp.pgp_password_db import PGPPasswordDB
+from sign.rpm.rpm_sign import (
+    RpmSignOutcome,
+    ensure_rpm_file,
+    read_package_identity,
+    sign_rpm_package,
+)
 from sign.utils.hashing import get_hasher, hash_file
 from sign.utils.locking import (
     GPG_AGENT_LOCK_FILENAME,
@@ -45,8 +52,9 @@ class PGP:
         self.tmp_dir = tmp_dir
         self.__pass_db.ask_for_passwords()
         self.__syslog = SysLog(tag_name=settings.service)
-        # Semaphore created lazily to avoid event loop issues in threads
+        # Semaphores created lazily to avoid event loop issues in threads
         self.__gpg_semaphore = None
+        self.__rpm_semaphore = None
 
     def list_keys(self):
         return self.__gpg.list_keys()
@@ -57,6 +65,96 @@ class PGP:
     @staticmethod
     def _is_yubikey(keyid: str) -> bool:
         return keyid in (settings.yubikey_keyids or [])
+
+    async def _store_upload(
+        self,
+        file: UploadFile,
+        dest_path: str,
+        max_bytes: int,
+    ) -> int:
+        """Stream an upload to ``dest_path``, enforcing ``max_bytes``."""
+        upload_size = 0
+        try:
+            async with aiofiles.open(dest_path, 'wb') as fd:
+                while content := await file.read(1024 * 1024):
+                    upload_size += len(content)
+                    if upload_size > max_bytes:
+                        raise FileTooBigError
+                    await fd.write(content)
+        finally:
+            # Always release the UploadFile's spooled temp file/fd, even if
+            # the upload-size check aborts mid-read. See PF-673.
+            file.file.close()
+        return upload_size
+
+    async def sign_rpm(
+        self,
+        keyid: str,
+        file: UploadFile,
+        user_email: str = '',
+    ) -> RpmSignOutcome:
+        """
+        Sign the header of an uploaded RPM and return where it landed.
+
+        The caller owns the file at ``RpmSignOutcome.path`` and is
+        responsible for removing it once it has been sent back. On any
+        failure the temporary file is removed here.
+        """
+        fd_num, dest_path = tempfile.mkstemp(dir=self.tmp_dir, suffix='.rpm')
+        os.close(fd_num)
+        try:
+            await self._store_upload(
+                file, dest_path, settings.rpm_upload_limit
+            )
+            ensure_rpm_file(dest_path)
+            identity = read_package_identity(
+                dest_path, rpm_binary=settings.rpm_binary
+            )
+            hash_before = hash_file(dest_path, hasher=get_hasher())
+            password = self.__pass_db.get_password(keyid)
+
+            if self.__rpm_semaphore is None:
+                self.__rpm_semaphore = asyncio.Semaphore(
+                    settings.rpm_sign_max_concurrency
+                )
+            # rpmsign is blocking and can take a while on a large package,
+            # so it runs off the event loop; the semaphore bounds how many
+            # of them this process runs at once, and the gpg-agent lock
+            # taken inside sign_rpm_package serializes against the sign
+            # slaves running on the same host.
+            async with self.__rpm_semaphore:
+                signature = await asyncio.to_thread(
+                    sign_rpm_package,
+                    dest_path,
+                    keyid,
+                    password,
+                    locks_dir_path=settings.gpg_locks_dir,
+                    yubikey_keyids=settings.yubikey_keyids,
+                    rpmsign_binary=settings.rpmsign_binary,
+                    rpm_binary=settings.rpm_binary,
+                    timeout=settings.rpm_sign_timeout,
+                )
+
+            hash_after = hash_file(dest_path, hasher=get_hasher())
+            self.__syslog.rpm_sign_log(
+                user_email=user_email,
+                file_name=file.filename or os.path.basename(dest_path),
+                package_nevra=identity['nevra'],
+                hash_before=hash_before,
+                hash_after=hash_after,
+                pgp_keyid=keyid,
+            )
+            return RpmSignOutcome(
+                path=dest_path,
+                identity=identity,
+                hash_before=hash_before,
+                hash_after=hash_after,
+                signature=signature,
+            )
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(dest_path)
+            raise
 
     async def sign(
         self,

@@ -19,6 +19,9 @@ from sign.db.helpers import (
     db_is_connected,
     delete_user,
     get_pool_stats,
+    grant_key,
+    list_user_keys,
+    revoke_key,
     update_password,
     user_exists,
 )
@@ -65,6 +68,52 @@ def user_delete():
     if len(email) == 0:
         print_and_exit("ERROR username is not set", 1)
     delete_user(email)
+
+
+def key_grant():
+    email = input("email: ")
+    if len(email) == 0:
+        print_and_exit("ERROR username is not set", 1)
+    keyid = input("key id: ").strip()
+    if len(keyid) == 0:
+        print_and_exit("ERROR: key id is not set", 1)
+    if grant_key(email, keyid):
+        print(f"user {email} can now sign with key {keyid}")
+    else:
+        print(f"user {email} could already sign with key {keyid}")
+    print(
+        "NOTE: this user is now restricted to their granted keys only, "
+        "whatever default_key_access says."
+    )
+
+
+def key_revoke():
+    email = input("email: ")
+    if len(email) == 0:
+        print_and_exit("ERROR username is not set", 1)
+    keyid = input("key id: ").strip()
+    if len(keyid) == 0:
+        print_and_exit("ERROR: key id is not set", 1)
+    if revoke_key(email, keyid):
+        print(f"user {email} can no longer sign with key {keyid}")
+    else:
+        print(f"user {email} had no grant for key {keyid}")
+
+
+def key_list():
+    email = input("email: ")
+    if len(email) == 0:
+        print_and_exit("ERROR username is not set", 1)
+    keys = list_user_keys(email)
+    if not keys:
+        print(
+            f"user {email} has no explicit key grants "
+            "(falls back to default_key_access)"
+        )
+        return
+    print(f"keys granted to {email}:")
+    for keyid in keys:
+        print(f"\t{keyid}")
 
 
 def dev_init():
@@ -154,6 +203,18 @@ cmds = {
         'descr': 'update user`s password',
     },
     'user_delete': {'func': user_delete, 'descr': 'delete user'},
+    'key_grant': {
+        'func': key_grant,
+        'descr': 'allow a user to sign with a given key id',
+    },
+    'key_revoke': {
+        'func': key_revoke,
+        'descr': 'withdraw a user`s permission to sign with a key id',
+    },
+    'key_list': {
+        'func': key_list,
+        'descr': 'list the key ids granted to a user',
+    },
     'dev_init': {
         'func': dev_init,
         'descr': 'creating development database with test user',
