@@ -8,6 +8,7 @@ import asyncio
 import base64
 import hashlib
 import logging
+import re
 import syslog
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
@@ -100,8 +101,70 @@ class KMS:
         # by KMS for that key.
         self._key_signing_algorithms: Dict[str, List[str]] = {}
 
+        # GPG key ID / fingerprint -> KMS key ID, so callers can address a
+        # key the way they address it on the GPG backend.
+        self._gpg_aliases = self._build_gpg_aliases()
+
         # Validate keys on init
         self._validate_keys()
+
+    def _build_gpg_aliases(self) -> Dict[str, str]:
+        """
+        Map each configured key's GPG long key ID and fingerprint to its KMS
+        key ID.
+
+        Raises:
+            ValueError: If a fingerprint is not 40 hex characters, or two KMS
+                keys share a GPG key ID, since a request naming that key ID
+                could not be resolved unambiguously.
+        """
+        aliases: Dict[str, str] = {}
+        for key_id in self._key_ids:
+            fingerprint = self._gpg_fingerprints.get(key_id)
+            if not fingerprint:
+                continue
+            fingerprint = fingerprint.replace(' ', '').upper()
+            # A shorter value would make a short, collision-prone key ID an
+            # accepted alias.
+            if not re.fullmatch(r'[0-9A-F]{40}', fingerprint):
+                raise ValueError(
+                    f"gpg_fingerprint for KMS key '{key_id}' must be 40 hex "
+                    f"characters, got '{fingerprint}'"
+                )
+            for alias in (fingerprint, fingerprint[-16:]):
+                owner = aliases.setdefault(alias, key_id)
+                if owner != key_id:
+                    raise ValueError(
+                        f"GPG key '{alias}' is configured for both KMS keys "
+                        f"'{owner}' and '{key_id}'"
+                    )
+        return aliases
+
+    def resolve_keyid(self, keyid: str) -> Optional[str]:
+        """
+        Resolve a requested key to its KMS key ID.
+
+        Accepts the KMS key ID itself, or the GPG long key ID (16 hex
+        characters) or fingerprint (40 hex characters) configured for it,
+        case-insensitively.
+
+        Returns:
+            The KMS key ID, or None if the key is not configured.
+        """
+        if keyid in self._key_ids:
+            return keyid
+        return self._gpg_aliases.get(keyid.replace(' ', '').upper())
+
+    def key_names(self, keyid: str) -> List[str]:
+        """
+        Every ID a configured KMS key is known by: its KMS key ID, then the
+        GPG long key ID and fingerprint configured for it.
+        """
+        return [keyid] + sorted(
+            alias
+            for alias, owner in self._gpg_aliases.items()
+            if owner == keyid
+        )
 
     def _validate_keys(self):
         """Validate that configured keys exist and are usable."""
@@ -139,8 +202,8 @@ class KMS:
                 ) from e
 
     def key_exists(self, keyid: str) -> bool:
-        """Check if a key exists in the configured key list."""
-        return keyid in self._key_ids
+        """Check if a key, by KMS or GPG key ID, is configured."""
+        return self.resolve_keyid(keyid) is not None
 
     def list_keys(self) -> List[str]:
         """Return list of configured key IDs."""
@@ -249,7 +312,8 @@ class KMS:
         Sign a file using AWS KMS.
 
         Args:
-            keyid: KMS key ID to use for signing
+            keyid: KMS key ID, or the GPG key ID / fingerprint configured
+                for it, to use for signing
             file: File to sign (FastAPI UploadFile)
             detach_sign: True for detached signature, False for cleartext
             digest_algo: Hash algorithm (SHA256, SHA384, SHA512)
@@ -263,8 +327,10 @@ class KMS:
                 by this backend or by the key
             FileTooBigError: If the file exceeds max_upload_bytes
         """
-        if keyid not in self._key_ids:
+        resolved = self.resolve_keyid(keyid)
+        if resolved is None:
             raise ValueError(f"Key not found: {keyid}")
+        keyid = resolved
 
         # Read file content
         content = await file.read()

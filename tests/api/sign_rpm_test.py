@@ -32,6 +32,8 @@ UPLOAD = RPM_LEAD_MAGIC + b'payload'
 
 
 class FakeBackend:
+    name = 'gpg'
+
     def __init__(self, tmp_path, keys=(KEYID, OTHER_KEYID), rpm=True):
         self._tmp_path = tmp_path
         self._keys = list(keys)
@@ -41,6 +43,12 @@ class FakeBackend:
 
     def key_exists(self, keyid):
         return keyid in self._keys
+
+    def resolve_keyid(self, keyid):
+        return keyid if keyid in self._keys else None
+
+    def key_names(self, keyid):
+        return [keyid]
 
     def list_keys(self):
         return list(self._keys)
@@ -122,6 +130,7 @@ def test_sign_rpm_returns_the_signed_package(client, audit):
     assert response.status_code == 200
     assert response.content == SIGNED_CONTENT
     assert response.headers['content-type'] == 'application/x-rpm'
+    assert response.headers['x-sign-backend'] == 'gpg'
     assert 'bash-5.2.15-5.el9.x86_64.rpm' in (
         response.headers['content-disposition']
     )
