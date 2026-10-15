@@ -1,9 +1,17 @@
 import logging
 import os
 import re
-from typing import List
+from typing import List, Sequence
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse, PlainTextResponse
 from starlette.background import BackgroundTask
 
@@ -43,25 +51,68 @@ RPM_SIGN_OPERATION = 'rpm-header'
 # HTTP_413_CONTENT_TOO_LARGE; spell the code out so either version works.
 HTTP_413_PAYLOAD_TOO_LARGE = 413
 UNSAFE_FILENAME_CHARS = re.compile(r'[^A-Za-z0-9._+~-]')
+# Names the backend that produced a signature. Set by the signing instance
+# itself, so it stays correct when a proxy forwards the request to a peer.
+SIGN_BACKEND_HEADER = 'X-Sign-Backend'
 
 
-def ensure_key_allowed(user: User, keyid: str):
+def ensure_key_allowed(
+    user: User,
+    keyid: str,
+    aliases: Sequence[str] = (),
+    requested: str = '',
+):
     """
     Reject the request unless ``user`` is entitled to sign with ``keyid``.
 
+    ``aliases`` are other IDs the same key is known by (e.g. the GPG key ID
+    of a KMS key) and ``requested`` is the key as the caller spelled it; a
+    grant on any of them entitles the caller.
+
     See ``sign.db.models.UserKey`` for how entitlement is resolved.
     """
-    if user_can_sign_with(user, keyid):
+    names = dict.fromkeys(n for n in (keyid, *aliases, requested) if n)
+    if any(user_can_sign_with(user, name) for name in names):
         return
+    shown = requested or keyid
     logging.warning(
         "user %s attempted to sign with key %s without permission",
         user.email,
-        keyid,
+        shown,
     )
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail=f'not authorized to sign with key {keyid}',
+        detail=f'not authorized to sign with key {shown}',
     )
+
+
+def backend_headers(backend: SigningBackend) -> dict:
+    """Response headers naming the backend that signed, if it has a name."""
+    return {SIGN_BACKEND_HEADER: backend.name} if backend.name else {}
+
+
+def resolve_allowed_key(backend: SigningBackend, user: User, keyid: str) -> str:
+    """
+    Resolve ``keyid`` to the backend's own ID for it and check that ``user``
+    may sign with it.
+
+    Returns:
+        The resolved key ID, which is what the backend should be called
+        with.
+    """
+    resolved = backend.resolve_keyid(keyid)
+    if resolved is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'key {keyid} does not exist',
+        )
+    ensure_key_allowed(
+        user,
+        resolved,
+        aliases=backend.key_names(resolved),
+        requested=keyid,
+    )
+    return resolved
 
 
 def safe_filename(name: str, fallback: str = 'package.rpm') -> str:
@@ -92,18 +143,14 @@ async def ping():
 async def sign(
     keyid: str,
     file: UploadFile,
+    response: Response,
     sign_type: str = 'detach-sign',
     sign_algo: str = 'SHA256',
     raw_signature: bool = False,
     user: User = Depends(get_current_user),
     backend: SigningBackend = Depends(get_backend),
 ) -> str:
-    if not backend.key_exists(keyid):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'key {keyid} does not exist',
-        )
-    ensure_key_allowed(user, keyid)
+    keyid = resolve_allowed_key(backend, user, keyid)
     try:
         answer = await backend.sign(
             keyid,
@@ -126,6 +173,7 @@ async def sign(
         "user %s has signed file %s with key %s (raw=%s)",
         user.email, file.filename, keyid, raw_signature,
     )
+    response.headers.update(backend_headers(backend))
     return answer
 
 
@@ -134,6 +182,7 @@ async def sign(
                         status.HTTP_403_FORBIDDEN: {"model": ErrMessage}})
 async def sign_batch(
     keyid: str,
+    response: Response,
     files: List[UploadFile] = File(...),
     sign_type: str = 'detach-sign',
     sign_algo: str = 'SHA256',
@@ -167,12 +216,7 @@ async def sign_batch(
             detail='No files provided for signing',
         )
 
-    if not backend.key_exists(keyid):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'key {keyid} does not exist',
-        )
-    ensure_key_allowed(user, keyid)
+    keyid = resolve_allowed_key(backend, user, keyid)
 
     logging.info(
         "user %s initiated batch signing of %d files with key %s (raw=%s)",
@@ -210,6 +254,7 @@ async def sign_batch(
             user.email, filename, keyid,
         )
 
+    response.headers.update(backend_headers(backend))
     return BatchSignResponse(
         results=file_results,
         total=len(files),
@@ -266,12 +311,7 @@ async def sign_rpm(
                 f'{settings.signing_backend} signing backend'
             ),
         )
-    if not backend.key_exists(keyid):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'key {keyid} does not exist',
-        )
-    ensure_key_allowed(user, keyid)
+    keyid = resolve_allowed_key(backend, user, keyid)
 
     filename = safe_filename(file.filename)
     # The audit record is opened before the key is touched: a request that
@@ -350,6 +390,7 @@ async def sign_rpm(
         outcome.path,
         media_type='application/x-rpm',
         filename=filename,
+        headers=backend_headers(backend),
         # The signed package is a temp file; drop it once it is on the wire.
         background=BackgroundTask(os.unlink, outcome.path),
     )

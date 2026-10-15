@@ -584,7 +584,36 @@ SWAGGER API documentation available at `/docs` endpoint
 File signing endpoints work with both GPG and KMS backends; `/sign-rpm`
 requires the GPG backend. The `keyid` parameter accepts:
 - For GPG: Key fingerprint (e.g., `AAAA1111BBBB2222`)
-- For KMS: Key ID or alias (e.g., `alias/my-key`)
+- For KMS: Key ID or alias (e.g., `alias/my-key`), or the GPG key ID
+  (16 hex characters, e.g. `DDDD4444EEEE5555`) or full fingerprint
+  (40 hex characters) configured for it as `gpg_fingerprint`. GPG key IDs
+  and fingerprints are case-insensitive. A key grant on any of these IDs
+  entitles the caller to the key. `gpg_fingerprint` must be the full
+  40-hex fingerprint (spaces allowed), or the service refuses to start.
+
+`/sign`, `/sign-batch` and `/sign-rpm` responses carry an `X-Sign-Backend`
+header naming the backend that produced the signature (`gpg` or `kms`).
+The signing service sets it itself, so it stays accurate behind a proxy
+that forwards requests between instances.
+
+### Choosing the KMS instance behind a key-routing proxy
+
+When several instances sit behind one nginx that routes on `keyid`, the same
+GPG key ID can be served by both a GPG and a KMS instance. Add
+`backend=kms` to the query string to have the proxy send the request to the
+KMS instance instead of routing by key:
+
+```bash
+curl -X POST \
+  'https://sign.example.com/sign?keyid=DDDD4444EEEE5555&backend=kms' \
+  -H "Authorization: Bearer $TOKEN" \
+  -F 'file=@README.md'
+```
+
+`kms` is the only accepted value; the proxy answers any other non-empty
+`backend` with 404. The service itself ignores `backend`; it only steers the
+proxy. Check `X-Sign-Backend` in the response to confirm which backend
+signed.
 
 ## Batch Signing Endpoint
 

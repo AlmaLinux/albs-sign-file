@@ -9,9 +9,31 @@ from sign.rpm.rpm_sign import RpmSignOutcome
 
 
 class SigningBackend(ABC):
+    # Backend type, as set in settings.signing_backend; reported to callers
+    # in the X-Sign-Backend response header.
+    name: str = ''
+
     @abstractmethod
     def key_exists(self, keyid: str) -> bool:
         pass
+
+    def resolve_keyid(self, keyid: str) -> Optional[str]:
+        """
+        Resolve a requested key to the ID this backend knows it by.
+
+        Returns None if the key does not exist. Backends that accept
+        several spellings of one key return the canonical one, so key
+        grants and logs refer to a single ID.
+        """
+        return keyid if self.key_exists(keyid) else None
+
+    def key_names(self, keyid: str) -> List[str]:
+        """
+        Every ID the resolved ``keyid`` is known by, canonical one first.
+
+        A grant on any of them entitles a caller to the key.
+        """
+        return [keyid]
 
     @abstractmethod
     def list_keys(self) -> List[str]:
@@ -136,6 +158,8 @@ def get_signing_backend() -> SigningBackend:
 
 
 class GPGAdapter(SigningBackend):
+    name = 'gpg'
+
     def __init__(self, pgp):
         self._pgp = pgp
 
@@ -207,11 +231,19 @@ class KMSAdapter(SigningBackend):
     cryptographic operations.
     """
 
+    name = 'kms'
+
     def __init__(self, kms):
         self._kms = kms
 
     def key_exists(self, keyid: str) -> bool:
         return self._kms.key_exists(keyid)
+
+    def resolve_keyid(self, keyid: str) -> Optional[str]:
+        return self._kms.resolve_keyid(keyid)
+
+    def key_names(self, keyid: str) -> List[str]:
+        return self._kms.key_names(keyid)
 
     def list_keys(self) -> List[str]:
         return self._kms.list_keys()
