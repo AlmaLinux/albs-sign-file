@@ -133,6 +133,7 @@ def compute_pgp_hash(
 
 def wrap_signature_as_pgp(
     raw_signature: bytes,
+    digest: bytes,
     content: bytes,
     algorithm: str,
     detach_sign: bool,
@@ -144,6 +145,7 @@ def wrap_signature_as_pgp(
 
     Args:
         raw_signature: Raw signature bytes from KMS
+        digest: The digest KMS signed, as returned by compute_pgp_hash
         content: Original file content (needed for cleartext)
         algorithm: Hash algorithm used
         detach_sign: True for detached signature, False for cleartext
@@ -183,7 +185,10 @@ def wrap_signature_as_pgp(
     sig_body += hashed_subpackets
     sig_body += struct.pack('>H', len(unhashed_subpackets))
     sig_body += unhashed_subpackets
-    sig_body += bytes([0x00, 0x00])
+    # Left 16 bits of the signed hash (RFC 4880 Section 5.2.3). gpg and
+    # Sequoia ignore a wrong value, but rpm's own OpenPGP parser (rpm 4.14
+    # on EL8, 4.16 on EL9) rejects the signature.
+    sig_body += digest[:2]
     sig_body += sig_mpi
 
     # Packet header (new format)
