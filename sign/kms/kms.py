@@ -395,6 +395,7 @@ class KMS:
             # Wrap in PGP format
             pgp_signature = wrap_signature_as_pgp(
                 sig_bytes,
+                digest,
                 content,
                 digest_algo,
                 detach_sign,
