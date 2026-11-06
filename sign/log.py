@@ -1,6 +1,20 @@
 import logging
 import logging.handlers
 
+from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
+
+# Variable and key names Sentry must not report besides its defaults. The KMS
+# RPM signer gets AWS credentials through an environment dict, which a
+# failing frame would otherwise carry into the event with its locals.
+SENTRY_DENYLIST = [
+    'access_key_id',
+    'aws_access_key_id',
+    'aws_secret_access_key',
+    'aws_session_token',
+    'aws_security_token',
+    'secret_access_key',
+]
+
 
 class SysLog:
 
@@ -22,8 +36,7 @@ class SysLog:
         pgp_keyid: str,
     ):
         self._logger.info(
-            'Filename: %s. Hash before: %s. '
-            'Hash after: %s. Sign key ID: %s',
+            'Filename: %s. Hash before: %s. ' 'Hash after: %s. Sign key ID: %s',
             file_name,
             hash_before,
             hash_after,
@@ -60,3 +73,15 @@ class SysLog:
     @property
     def logger(self) -> logging.Logger:
         return self._logger
+
+
+def sentry_event_scrubber() -> EventScrubber:
+    """
+    Scrubber for sentry_sdk.init: the default denylist plus SENTRY_DENYLIST,
+    applied to nested dicts too, since credentials sit inside an env dict
+    rather than in a variable of their own.
+    """
+    return EventScrubber(
+        denylist=DEFAULT_DENYLIST + SENTRY_DENYLIST,
+        recursive=True,
+    )

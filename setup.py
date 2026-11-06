@@ -19,6 +19,11 @@ setup(
         'alembic >= 1.13.1',
         'PyYAML >= 6.0',
     ],
+    entry_points={
+        'console_scripts': [
+            'sign-file-rpm-signer = sign.kms.rpm_signer:main',
+        ],
+    },
     extras_require={
         'kms': [
             'boto3 >= 1.26.0',

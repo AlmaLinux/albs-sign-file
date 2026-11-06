@@ -58,6 +58,116 @@ def get_hash_name(algorithm: str) -> str:
     return 'SHA256'
 
 
+def _issuer_key_id(gpg_key_id: str) -> str:
+    """Long (16 hex) key ID of a GPG fingerprint, as the issuer subpacket."""
+    return gpg_key_id[-16:].upper() if gpg_key_id else '0' * 16
+
+
+def _hashed_subpackets(creation_time: datetime, gpg_key_id: str) -> bytes:
+    """Hashed subpackets: signature creation time and issuer key ID."""
+    creation_ts = int(creation_time.timestamp())
+    time_subpacket = bytes([5, 2]) + struct.pack('>I', creation_ts)
+    issuer_subpacket = bytes([9, 16]) + bytes.fromhex(
+        _issuer_key_id(gpg_key_id)
+    )
+    return time_subpacket + issuer_subpacket
+
+
+def signature_trailer(
+    sig_type: int,
+    hash_algo: HashAlgorithm,
+    gpg_key_id: str,
+    creation_time: datetime,
+) -> bytes:
+    """
+    The bytes hashed after the signed data (RFC 4880 Section 5.2.4).
+
+    The digest to sign is the hash of the data followed by these bytes.
+    Callers signing data too large to hold in memory hash it in chunks and
+    finish with this.
+
+    Args:
+        sig_type: Signature type value (0x00 binary, 0x01 canonical text)
+        hash_algo: Hash algorithm of the signature
+        gpg_key_id: GPG key fingerprint
+        creation_time: Signature creation time
+    """
+    hashed_subpackets = _hashed_subpackets(creation_time, gpg_key_id)
+    trailer = bytes([
+        4,  # Version 4
+        sig_type,
+        1,  # RSA
+        hash_algo.value,
+    ])
+    trailer += struct.pack('>H', len(hashed_subpackets))
+    trailer += hashed_subpackets
+    final_trailer = bytes([4, 0xFF]) + struct.pack('>I', len(trailer))
+    return trailer + final_trailer
+
+
+def build_signature_packet(
+    raw_signature: bytes,
+    digest: bytes,
+    sig_type: int,
+    hash_algo: HashAlgorithm,
+    gpg_key_id: str,
+    creation_time: datetime,
+) -> bytes:
+    """
+    Build a binary OpenPGP v4 signature packet around a raw RSA signature.
+
+    Args:
+        raw_signature: Raw signature bytes from KMS
+        digest: The digest KMS signed
+        sig_type: Signature type value the digest was computed with
+        hash_algo: Hash algorithm the digest was computed with
+        gpg_key_id: GPG key fingerprint
+        creation_time: Creation time the digest was computed with
+
+    Returns:
+        The packet, header included
+    """
+    hashed_subpackets = _hashed_subpackets(creation_time, gpg_key_id)
+
+    # Unhashed subpackets
+    unhashed_subpackets = bytes([9, 16]) + bytes.fromhex(
+        _issuer_key_id(gpg_key_id)
+    )
+
+    # MPI encoding of signature
+    sig_stripped = raw_signature.lstrip(b'\x00') or b'\x00'
+    bit_len = (len(sig_stripped) - 1) * 8
+    if sig_stripped[0]:
+        bit_len += sig_stripped[0].bit_length()
+    sig_mpi = struct.pack('>H', bit_len) + sig_stripped
+
+    # Signature packet body
+    sig_body = bytes([4, sig_type, 1, hash_algo.value])
+    sig_body += struct.pack('>H', len(hashed_subpackets))
+    sig_body += hashed_subpackets
+    sig_body += struct.pack('>H', len(unhashed_subpackets))
+    sig_body += unhashed_subpackets
+    # Left 16 bits of the signed hash (RFC 4880 Section 5.2.3). gpg and
+    # Sequoia ignore a wrong value, but rpm's own OpenPGP parser (rpm 4.14
+    # on EL8, 4.16 on EL9) rejects the signature.
+    sig_body += digest[:2]
+    sig_body += sig_mpi
+
+    # Packet header (new format)
+    header = bytes([0xC2])  # Tag 2 (signature)
+    body_len = len(sig_body)
+    if body_len < 192:
+        header += bytes([body_len])
+    elif body_len < 8384:
+        header += bytes(
+            [((body_len - 192) >> 8) + 192, (body_len - 192) & 0xFF]
+        )
+    else:
+        header += bytes([0xFF]) + struct.pack('>I', body_len)
+
+    return header + sig_body
+
+
 def compute_pgp_hash(
     content: bytes,
     algorithm: str,
@@ -83,7 +193,7 @@ def compute_pgp_hash(
 
     hash_func = get_hashlib_func(algorithm)
     hash_algo = get_pgpy_hash_algorithm(algorithm)
-    issuer_key_id = gpg_key_id[-16:].upper() if gpg_key_id else '0' * 16
+    issuer_key_id = _issuer_key_id(gpg_key_id)
 
     if detach_sign:
         sig_type = SignatureType.BinaryDocument
@@ -99,33 +209,12 @@ def compute_pgp_hash(
         normalized = '\r\n'.join(lines)
         hash_content = normalized.encode('utf-8')
 
-    # Build signature trailer for hash computation (RFC 4880 Section 5.2.4)
-    creation_ts = int(creation_time.timestamp())
-
-    # Hashed subpackets
-    time_subpacket = bytes([5, 2]) + struct.pack('>I', creation_ts)
-    key_id_bytes = bytes.fromhex(issuer_key_id)
-    issuer_subpacket = bytes([9, 16]) + key_id_bytes
-    hashed_subpackets = time_subpacket + issuer_subpacket
-
-    # Signature trailer
-    trailer = bytes([
-        4,  # Version 4
-        sig_type.value,
-        1,  # RSA
-        hash_algo.value,
-    ])
-    trailer += struct.pack('>H', len(hashed_subpackets))
-    trailer += hashed_subpackets
-
-    # Final trailer
-    final_trailer = bytes([4, 0xFF]) + struct.pack('>I', len(trailer))
-
     # Compute hash
     h = hash_func()
     h.update(hash_content)
-    h.update(trailer)
-    h.update(final_trailer)
+    h.update(
+        signature_trailer(sig_type.value, hash_algo, gpg_key_id, creation_time)
+    )
     digest = h.digest()
 
     return digest, sig_type, hash_algo, creation_time, issuer_key_id
@@ -159,49 +248,15 @@ def wrap_signature_as_pgp(
         creation_time = datetime.now(timezone.utc)
 
     hash_algo = get_pgpy_hash_algorithm(algorithm)
-    issuer_key_id = gpg_key_id[-16:].upper() if gpg_key_id else '0' * 16
-    creation_ts = int(creation_time.timestamp())
     sig_type_val = 0x00 if detach_sign else 0x01
-
-    # Build hashed subpackets
-    time_subpacket = bytes([5, 2]) + struct.pack('>I', creation_ts)
-    key_id_bytes = bytes.fromhex(issuer_key_id)
-    issuer_subpacket = bytes([9, 16]) + key_id_bytes
-    hashed_subpackets = time_subpacket + issuer_subpacket
-
-    # Unhashed subpackets
-    unhashed_subpackets = issuer_subpacket
-
-    # MPI encoding of signature
-    sig_stripped = raw_signature.lstrip(b'\x00') or b'\x00'
-    bit_len = (len(sig_stripped) - 1) * 8
-    if sig_stripped[0]:
-        bit_len += sig_stripped[0].bit_length()
-    sig_mpi = struct.pack('>H', bit_len) + sig_stripped
-
-    # Signature packet body
-    sig_body = bytes([4, sig_type_val, 1, hash_algo.value])
-    sig_body += struct.pack('>H', len(hashed_subpackets))
-    sig_body += hashed_subpackets
-    sig_body += struct.pack('>H', len(unhashed_subpackets))
-    sig_body += unhashed_subpackets
-    # Left 16 bits of the signed hash (RFC 4880 Section 5.2.3). gpg and
-    # Sequoia ignore a wrong value, but rpm's own OpenPGP parser (rpm 4.14
-    # on EL8, 4.16 on EL9) rejects the signature.
-    sig_body += digest[:2]
-    sig_body += sig_mpi
-
-    # Packet header (new format)
-    header = bytes([0xC2])  # Tag 2 (signature)
-    body_len = len(sig_body)
-    if body_len < 192:
-        header += bytes([body_len])
-    elif body_len < 8384:
-        header += bytes([((body_len - 192) >> 8) + 192, (body_len - 192) & 0xFF])
-    else:
-        header += bytes([0xFF]) + struct.pack('>I', body_len)
-
-    packet = header + sig_body
+    packet = build_signature_packet(
+        raw_signature,
+        digest,
+        sig_type_val,
+        hash_algo,
+        gpg_key_id,
+        creation_time,
+    )
 
     # Parse with pgpy for proper ASCII armoring
     sig = pgpy.PGPSignature()

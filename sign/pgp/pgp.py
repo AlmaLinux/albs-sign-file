@@ -29,6 +29,7 @@ from sign.utils.locking import (
     exclusive_lock,
     shared_lock,
 )
+from sign.utils.upload import store_upload
 
 
 class PGP:
@@ -66,27 +67,6 @@ class PGP:
     def _is_yubikey(keyid: str) -> bool:
         return keyid in (settings.yubikey_keyids or [])
 
-    async def _store_upload(
-        self,
-        file: UploadFile,
-        dest_path: str,
-        max_bytes: int,
-    ) -> int:
-        """Stream an upload to ``dest_path``, enforcing ``max_bytes``."""
-        upload_size = 0
-        try:
-            async with aiofiles.open(dest_path, 'wb') as fd:
-                while content := await file.read(1024 * 1024):
-                    upload_size += len(content)
-                    if upload_size > max_bytes:
-                        raise FileTooBigError
-                    await fd.write(content)
-        finally:
-            # Always release the UploadFile's spooled temp file/fd, even if
-            # the upload-size check aborts mid-read. See PF-673.
-            file.file.close()
-        return upload_size
-
     async def sign_rpm(
         self,
         keyid: str,
@@ -103,9 +83,7 @@ class PGP:
         fd_num, dest_path = tempfile.mkstemp(dir=self.tmp_dir, suffix='.rpm')
         os.close(fd_num)
         try:
-            await self._store_upload(
-                file, dest_path, settings.rpm_upload_limit
-            )
+            await store_upload(file, dest_path, settings.rpm_upload_limit)
             ensure_rpm_file(dest_path)
             identity = read_package_identity(
                 dest_path, rpm_binary=settings.rpm_binary

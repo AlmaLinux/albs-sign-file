@@ -36,6 +36,7 @@ RPM_SIGN_MAX_CONCURRENCY_DEFAULT = 2
 RPM_SIGN_TIMEOUT_DEFAULT = 1200
 RPMSIGN_BINARY_DEFAULT = "rpmsign"
 RPM_BINARY_DEFAULT = "rpm"
+KMS_RPM_SIGNER_BINARY_DEFAULT = "sign-file-rpm-signer"
 DEFAULT_KEY_ACCESS_DEFAULT = "all"
 
 
@@ -176,6 +177,13 @@ class Settings(BaseSettings):
         default=[],
         description="list of KMS keys with kms_id and gpg_fingerprint",
     )
+    kms_rpm_signer_binary: str = Field(
+        default=KMS_RPM_SIGNER_BINARY_DEFAULT,
+        description=(
+            "gpg stand-in rpmsign runs to sign RPM headers with a KMS key; "
+            "looked up in PATH unless absolute"
+        ),
+    )
     yubikey_keyids: List[str] = Field(
         default_factory=list,
         description=(
@@ -207,9 +215,7 @@ class Settings(BaseSettings):
     )
     rpm_sign_enabled: bool = Field(
         default=RPM_SIGN_ENABLED_DEFAULT,
-        description=(
-            "enable the RPM header signing endpoint (GPG backend only)"
-        ),
+        description="enable the RPM header signing endpoint",
     )
     rpm_sign_max_concurrency: int = Field(
         default=RPM_SIGN_MAX_CONCURRENCY_DEFAULT,
@@ -376,6 +382,8 @@ def create_settings() -> Settings:
             flat_config['kms_max_workers'] = kms['max_workers']
         if 'keys' in kms:
             flat_config['kms_keys'] = kms['keys']
+        if 'rpm_signer_binary' in kms:
+            flat_config['kms_rpm_signer_binary'] = kms['rpm_signer_binary']
 
     if 'bitwarden' in yaml_config:
         bw = yaml_config['bitwarden']
@@ -445,6 +453,7 @@ def create_settings() -> Settings:
         'SF_KMS_REGION': 'kms_region',
         'SF_KMS_SIGNING_ALGORITHM': 'kms_signing_algorithm',
         'SF_KMS_MAX_WORKERS': 'kms_max_workers',
+        'SF_KMS_RPM_SIGNER_BINARY': 'kms_rpm_signer_binary',
         'SF_PASS_DB_DEV_MODE': 'pass_db_dev_mode',
         'SF_PASS_DB_DEV_PASS': 'pass_db_dev_pass',
         'SF_BITWARDEN_ENABLED': 'bitwarden_enabled',

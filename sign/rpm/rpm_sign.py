@@ -15,6 +15,8 @@ import dataclasses
 import logging
 import os
 import re
+import signal
+import subprocess  # nosec B404
 import traceback
 from typing import Dict, List, Optional
 
@@ -39,6 +41,7 @@ __all__ = [
     'read_signature_info',
     'rpmsign_version',
     'sign_rpm_package',
+    'sign_rpm_package_with_signer',
     'supports_rpmv3',
     'validate_keyid',
     'verify_header_signature',
@@ -372,6 +375,111 @@ def sign_rpm_package(
         )
         raise RpmSignError(
             f'RPM sign failed with {status} exit code.\nOutput: {out}'
+        )
+
+    return verify_header_signature(path, keyid, rpm_binary=rpm_binary)
+
+
+def sign_rpm_package_with_signer(
+    path: str,
+    keyid: str,
+    signer_binary: str,
+    env: Optional[Dict[str, str]] = None,
+    digest_algo: str = 'sha256',
+    rpmsign_binary: str = 'rpmsign',
+    rpm_binary: str = 'rpm',
+    timeout: int = 1200,
+) -> str:
+    """
+    Sign the header of the RPM package at ``path`` in place, with
+    ``signer_binary`` standing in for gpg.
+
+    rpmsign runs ``%__gpg`` with gpg's command line and the data to sign on
+    stdin, and stores the detached signature that program writes. Any
+    program that does the same, such as the KMS signer, can therefore sign
+    the package. It needs no passphrase and no gpg-agent, so neither the
+    PTY nor the gpg locks of ``sign_rpm_package`` are involved.
+
+    Parameters
+    ----------
+    path : str
+        RPM (or source RPM) package path.
+    keyid : str
+        Fingerprint of the key, passed to the signer as ``%_gpg_name``.
+    signer_binary : str
+        Absolute path of the gpg stand-in. rpm executes it directly, so it
+        must not contain whitespace.
+    env : dict
+        Variables added to rpmsign's environment, which the signer inherits.
+    digest_algo : str
+        Digest passed to the signer as ``--digest-algo``.
+    rpmsign_binary : str
+        ``rpmsign`` executable.
+    rpm_binary : str
+        ``rpm`` executable, used to read the resulting signature back.
+    timeout : int
+        Seconds to wait for rpmsign.
+
+    Returns
+    -------
+    str
+        The header signature description rpm reports for the signed package.
+
+    Raises
+    ------
+    RpmSignError
+        If an error occurred.
+    NotAnRpmError
+        If ``path`` is not an RPM package.
+    """
+    validate_keyid(keyid)
+    # rpm splits the expanded %__gpg_sign_cmd on whitespace and execs the
+    # first word without a PATH lookup.
+    if not os.path.isabs(signer_binary) or re.search(r'\s', signer_binary):
+        raise RpmSignError(
+            f'signer must be an absolute path without spaces: {signer_binary}'
+        )
+    ensure_rpm_file(path)
+    delete_signatures(path, rpmsign_binary=rpmsign_binary)
+
+    args = []
+    if supports_rpmv3(rpmsign_version(rpmsign_binary)):
+        args.append('--rpmv3')
+    args.extend([
+        '--resign',
+        '-D',
+        f'__gpg {signer_binary}',
+        '-D',
+        f'_gpg_name {keyid}',
+        '-D',
+        f'_gpg_digest_algo {digest_algo}',
+        path,
+    ])
+    proc = plumbum.local[rpmsign_binary].popen(
+        args,
+        # rpmsign warns when GPG_TTY is unset and stdin is not a terminal
+        env=dict(env or {}, GPG_TTY=os.environ.get('GPG_TTY', '/dev/null')),
+        # The signer is rpmsign's child and shares its output pipes. In a
+        # session of their own a timeout kills both; killing rpmsign alone
+        # would leave the signer running and the pipes open.
+        new_session=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        raise RpmSignError(
+            f'The RPM signing command timed out after {timeout}s.'
+        ) from None
+    code = proc.returncode
+    out = out.decode(errors='replace')
+    err = err.decode(errors='replace')
+    logging.debug('Command result: %d, %s\n%s', code, out, err)
+    if code != 0:
+        full_out = '\n'.join((out, err)).strip()
+        raise RpmSignError(
+            f'RPM sign failed with {code} exit code.\nOutput: {full_out}'
         )
 
     return verify_header_signature(path, keyid, rpm_binary=rpm_binary)

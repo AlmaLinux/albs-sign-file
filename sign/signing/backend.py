@@ -65,8 +65,8 @@ class SigningBackend(ABC):
         """
         Whether this backend can sign RPM headers.
 
-        ``rpmsign`` drives a local gpg with the private key in its keyring,
-        so only backends that hold the key that way can do it.
+        ``rpmsign`` asks a gpg-compatible program for the signature: gpg
+        itself on the GPG backend, the KMS signer on the KMS backend.
         """
         return False
 
@@ -147,6 +147,12 @@ def get_signing_backend() -> SigningBackend:
                 max_upload_bytes=settings.max_upload_bytes,
                 tmp_dir=settings.tmp_dir,
                 max_workers=settings.kms_max_workers,
+                rpm_signer_binary=settings.kms_rpm_signer_binary,
+                rpm_upload_limit=settings.rpm_upload_limit,
+                rpm_sign_max_concurrency=settings.rpm_sign_max_concurrency,
+                rpm_sign_timeout=settings.rpm_sign_timeout,
+                rpmsign_binary=settings.rpmsign_binary,
+                rpm_binary=settings.rpm_binary,
             )
         )
         logging.info("Using AWS KMS signing backend")
@@ -278,4 +284,19 @@ class KMSAdapter(SigningBackend):
             detach_sign=detach_sign,
             digest_algo=digest_algo,
             raw_signature=raw_signature,
+        )
+
+    def supports_rpm_signing(self) -> bool:
+        return self._kms.supports_rpm_signing()
+
+    async def sign_rpm(
+        self,
+        keyid: str,
+        file: UploadFile,
+        user_email: str = '',
+    ) -> RpmSignOutcome:
+        return await self._kms.sign_rpm(
+            keyid=keyid,
+            file=file,
+            user_email=user_email,
         )

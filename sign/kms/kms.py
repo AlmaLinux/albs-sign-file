@@ -6,10 +6,14 @@ This module provides PGP-compatible signing using AWS KMS keys.
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import logging
+import os
 import re
+import shutil
 import syslog
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
@@ -18,12 +22,20 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from fastapi import UploadFile
 
-from sign.errors import FileTooBigError
+from sign.errors import FileTooBigError, RpmSignError
 from sign.kms.pgp_wrapper import (
     compute_pgp_hash,
     wrap_signature_as_pgp,
 )
-from sign.utils.hashing import hash_content
+from sign.kms.rpm_signer import signer_env
+from sign.rpm.rpm_sign import (
+    RpmSignOutcome,
+    ensure_rpm_file,
+    read_package_identity,
+    sign_rpm_package_with_signer,
+)
+from sign.utils.hashing import get_hasher, hash_content, hash_file
+from sign.utils.upload import store_upload
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +69,12 @@ class KMS:
         max_upload_bytes: int = 100000000,
         tmp_dir: str = '/tmp',
         max_workers: int = 10,
+        rpm_signer_binary: str = 'sign-file-rpm-signer',
+        rpm_upload_limit: Optional[int] = None,
+        rpm_sign_max_concurrency: int = 2,
+        rpm_sign_timeout: int = 1200,
+        rpmsign_binary: str = 'rpmsign',
+        rpm_binary: str = 'rpm',
     ):
         """
         Initialize the KMS signing backend.
@@ -71,6 +89,14 @@ class KMS:
             max_upload_bytes: Maximum file size for signing
             tmp_dir: Directory for temporary files
             max_workers: Maximum concurrent signing operations
+            rpm_signer_binary: gpg stand-in rpmsign runs to sign RPM
+                headers with KMS; looked up in PATH unless absolute
+            rpm_upload_limit: Maximum RPM size, defaults to
+                max_upload_bytes
+            rpm_sign_max_concurrency: Maximum rpmsign runs at once
+            rpm_sign_timeout: Seconds to wait for one rpmsign run
+            rpmsign_binary: rpmsign executable
+            rpm_binary: rpm executable
         """
         self._key_ids = key_ids
         self._gpg_fingerprints = gpg_fingerprints
@@ -79,6 +105,18 @@ class KMS:
         self._max_upload_bytes = max_upload_bytes
         self._tmp_dir = tmp_dir
         self._max_workers = max_workers
+        # Passed on to the RPM signer, which runs as a separate process
+        # and builds its own KMS client.
+        self._access_key_id = access_key_id
+        self._secret_access_key = secret_access_key
+        self._rpm_signer_binary = rpm_signer_binary
+        self._rpm_upload_limit = rpm_upload_limit or max_upload_bytes
+        self._rpm_sign_max_concurrency = rpm_sign_max_concurrency
+        self._rpm_sign_timeout = rpm_sign_timeout
+        self._rpmsign_binary = rpmsign_binary
+        self._rpm_binary = rpm_binary
+        # Created lazily, inside the event loop that uses it.
+        self._rpm_semaphore: Optional[asyncio.Semaphore] = None
 
         # Configure boto3 client with retries
         config = Config(
@@ -107,6 +145,28 @@ class KMS:
 
         # Validate keys on init
         self._validate_keys()
+
+        # Found once, so GET /keys and /sign-rpm report missing tools as
+        # unavailable rather than as a failure worth retrying.
+        self._rpm_signer = self._find_rpm_signer()
+        self._missing_rpm_tools = [
+            binary
+            for binary in (rpmsign_binary, rpm_binary)
+            if shutil.which(binary) is None
+        ]
+        if self._rpm_signer is None:
+            self._missing_rpm_tools.append(rpm_signer_binary)
+        if not self._signing_algorithm.startswith('RSASSA_PKCS1_V1_5_'):
+            logger.warning(
+                "RPM header signing is unavailable: %s signatures cannot be "
+                "OpenPGP RSA signatures",
+                self._signing_algorithm,
+            )
+        elif self._missing_rpm_tools:
+            logger.warning(
+                "RPM header signing is unavailable: not found: %s",
+                ', '.join(self._missing_rpm_tools),
+            )
 
     def _build_gpg_aliases(self) -> Dict[str, str]:
         """
@@ -286,19 +346,132 @@ class KMS:
         )
         return response['Signature']
 
+    @staticmethod
+    def _syslog(message: str):
+        try:
+            syslog.syslog(syslog.LOG_INFO, message)
+        except Exception:
+            logger.info(message)
+
     def _log_signing_event(
         self, filename: str, keyid: str, hash_before: str, success: bool
     ):
         """Log signing event to syslog for audit."""
         status = "SUCCESS" if success else "FAILED"
-        message = (
+        self._syslog(
             f"KMS Sign {status}: file={filename} "
             f"key={keyid} hash={hash_before}"
         )
+
+    def supports_rpm_signing(self) -> bool:
+        """
+        Whether RPM headers can be signed: rpmsign, rpm and the RPM signer
+        are installed, and the configured algorithm makes RSASSA-PKCS1-v1_5
+        signatures, the only kind an OpenPGP RSA signature packet can carry.
+        """
+        return not self._missing_rpm_tools and (
+            self._signing_algorithm.startswith('RSASSA_PKCS1_V1_5_')
+        )
+
+    def _find_rpm_signer(self) -> Optional[str]:
+        signer = shutil.which(self._rpm_signer_binary)
+        return os.path.abspath(signer) if signer else None
+
+    async def sign_rpm(
+        self,
+        keyid: str,
+        file: UploadFile,
+        user_email: str = '',
+    ) -> RpmSignOutcome:
+        """
+        Sign the header of an uploaded RPM and return where it landed.
+
+        rpmsign does the signing, with the KMS signer standing in for gpg.
+        The caller owns the file at ``RpmSignOutcome.path`` and is
+        responsible for removing it once it has been sent back. On any
+        failure the temporary file is removed here.
+
+        Raises:
+            ValueError: If the key is unknown
+            FileTooBigError: If the package exceeds the RPM upload limit
+            NotAnRpmError: If the upload is not an RPM package
+            RpmSignError: If signing failed
+        """
+        resolved = self.resolve_keyid(keyid)
+        if resolved is None:
+            raise ValueError(f"Key not found: {keyid}")
+        keyid = resolved
+        fingerprint = self.get_gpg_fingerprint(keyid).replace(' ', '').upper()
+        _, signing_algorithm = self.resolve_signing_algorithm(keyid, 'SHA256')
+        env = signer_env(
+            kms_key_id=keyid,
+            gpg_fingerprint=fingerprint,
+            signing_algorithm=signing_algorithm,
+            region=self._region,
+            access_key_id=self._access_key_id,
+            secret_access_key=self._secret_access_key,
+        )
+
+        fd_num, dest_path = tempfile.mkstemp(dir=self._tmp_dir, suffix='.rpm')
+        os.close(fd_num)
         try:
-            syslog.syslog(syslog.LOG_INFO, message)
-        except Exception:
-            logger.info(message)
+            await store_upload(file, dest_path, self._rpm_upload_limit)
+            ensure_rpm_file(dest_path)
+            identity = read_package_identity(
+                dest_path, rpm_binary=self._rpm_binary
+            )
+            hash_before = hash_file(dest_path, hasher=get_hasher())
+            signer = self._find_rpm_signer()
+            if signer is None:
+                raise RpmSignError(
+                    f'RPM signer {self._rpm_signer_binary!r} is not installed'
+                )
+
+            if self._rpm_semaphore is None:
+                self._rpm_semaphore = asyncio.Semaphore(
+                    self._rpm_sign_max_concurrency
+                )
+            # rpmsign is blocking and hashes the whole package, so it runs
+            # off the event loop, a bounded number at a time.
+            async with self._rpm_semaphore:
+                signature = await asyncio.to_thread(
+                    sign_rpm_package_with_signer,
+                    dest_path,
+                    fingerprint,
+                    signer,
+                    env=env,
+                    rpmsign_binary=self._rpmsign_binary,
+                    rpm_binary=self._rpm_binary,
+                    timeout=self._rpm_sign_timeout,
+                )
+
+            hash_after = hash_file(dest_path, hasher=get_hasher())
+            # Same line as the GPG backend writes for RPM header signing.
+            self._syslog(
+                f"RPM header sign. User: {user_email}. "
+                f"Filename: {file.filename}. Package: {identity['nevra']}. "
+                f"Hash before: {hash_before}. Hash after: {hash_after}. "
+                f"Sign key ID: {keyid}"
+            )
+            return RpmSignOutcome(
+                path=dest_path,
+                identity=identity,
+                hash_before=hash_before,
+                hash_after=hash_after,
+                signature=signature,
+            )
+        except BaseException as exc:
+            if isinstance(exc, Exception):
+                self._syslog(
+                    f"RPM header sign FAILED. User: {user_email}. "
+                    f"Filename: {file.filename}. Sign key ID: {keyid}. "
+                    f"Error: {type(exc).__name__}"
+                )
+            # rpmsign leaves the signature file behind when it is killed.
+            for path in (dest_path, f'{dest_path}.sig'):
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(path)
+            raise
 
     async def sign(
         self,

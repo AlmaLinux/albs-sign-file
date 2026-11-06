@@ -7,6 +7,9 @@ operations (delete old signatures, then re-sign, then read the signature
 back) and the failure paths.
 """
 
+import signal
+import subprocess
+
 import pytest
 
 from sign.errors import NotAnRpmError, RpmSignError
@@ -382,3 +385,148 @@ def test_sign_rpm_package_sets_gpg_tty(
     )
 
     assert 'export GPG_TTY=$(tty);' in seen['command']
+
+
+# --- signing with a gpg stand-in ----------------------------------------------
+
+SIGNER = '/usr/local/bin/sign-file-rpm-signer'
+FINGERPRINT = 'D6FD32A40E7DB971B153C210FFAFE84D3118885F'
+SIGNER_SIG_LINE = SIG_LINE.replace('aaaa1111bbbb2222', 'ffafe84d3118885f')
+
+
+@pytest.fixture
+def signer_plumbum(fake_plumbum):
+    """
+    rpmsign reports ``version``, deletes signatures, and re-signs with
+    ``sign_result`` (a tuple, or an exception waiting for it to finish
+    raises).
+    """
+
+    def _install(
+        version='4.16.1.3', sign_result=(0, '', ''), sig=SIGNER_SIG_LINE
+    ):
+        def _rpmsign(args):
+            if args[0] == '--version':
+                return (0, f'RPM version {version}\n', '')
+            if args[0] == '--delsign':
+                return (0, '', '')
+            return sign_result
+
+        return fake_plumbum({
+            'rpmsign': _rpmsign,
+            'rpm': lambda args: (0, sig, ''),
+        })
+
+    return _install
+
+
+def _sign_args(calls):
+    return [
+        args
+        for name, args in calls
+        if name == 'rpmsign' and args[0] not in ('--version', '--delsign')
+    ]
+
+
+def test_signer_command_points_gpg_at_the_signer(signer_plumbum, rpm_file):
+    calls = signer_plumbum()
+
+    rpm_sign.sign_rpm_package_with_signer(rpm_file, FINGERPRINT, SIGNER)
+
+    assert ['--delsign', rpm_file] in [args for _, args in calls]
+    assert _sign_args(calls) == [[
+        '--rpmv3',
+        '--resign',
+        '-D',
+        f'__gpg {SIGNER}',
+        '-D',
+        f'_gpg_name {FINGERPRINT}',
+        '-D',
+        '_gpg_digest_algo sha256',
+        rpm_file,
+    ]]
+
+
+def test_signer_command_omits_rpmv3_on_old_rpmsign(signer_plumbum, rpm_file):
+    calls = signer_plumbum(version='4.11.3')
+
+    rpm_sign.sign_rpm_package_with_signer(rpm_file, FINGERPRINT, SIGNER)
+
+    assert '--rpmv3' not in _sign_args(calls)[0]
+
+
+def test_signer_gets_env_and_own_session(signer_plumbum, rpm_file, monkeypatch):
+    monkeypatch.delenv('GPG_TTY', raising=False)
+    calls = signer_plumbum()
+
+    rpm_sign.sign_rpm_package_with_signer(
+        rpm_file, FINGERPRINT, SIGNER, env={'KEY': 'value'}
+    )
+
+    [(name, kwargs)] = calls.kwargs
+    assert name == 'rpmsign'
+    assert kwargs['env'] == {'KEY': 'value', 'GPG_TTY': '/dev/null'}
+    assert kwargs['new_session'] is True
+
+
+def test_signer_returns_the_signature_rpm_reports(signer_plumbum, rpm_file):
+    signer_plumbum()
+
+    signature = rpm_sign.sign_rpm_package_with_signer(
+        rpm_file, FINGERPRINT, SIGNER
+    )
+
+    assert signature.endswith(FINGERPRINT[-16:].lower())
+
+
+@pytest.mark.parametrize(
+    'signer', ['sign-file-rpm-signer', '/opt/my signer/bin/signer']
+)
+def test_signer_path_must_be_exec_ready(signer_plumbum, rpm_file, signer):
+    """rpm execs the first word of %__gpg_sign_cmd without a PATH lookup."""
+    calls = signer_plumbum()
+
+    with pytest.raises(RpmSignError, match='absolute path without spaces'):
+        rpm_sign.sign_rpm_package_with_signer(rpm_file, FINGERPRINT, signer)
+
+    assert calls == []
+
+
+def test_signer_rejects_bad_keyid(rpm_file):
+    with pytest.raises(ValueError):
+        rpm_sign.sign_rpm_package_with_signer(rpm_file, '$(id)', SIGNER)
+
+
+def test_signer_failure_carries_its_output(signer_plumbum, rpm_file):
+    signer_plumbum(
+        sign_result=(1, '', 'sign-file-rpm-signer: KMS signing failed')
+    )
+
+    with pytest.raises(RpmSignError, match='KMS signing failed'):
+        rpm_sign.sign_rpm_package_with_signer(rpm_file, FINGERPRINT, SIGNER)
+
+
+def test_signer_timeout_kills_rpmsign_and_the_signer(
+    signer_plumbum, rpm_file, monkeypatch
+):
+    """The signer is rpmsign's child: the whole process group goes."""
+    killed = []
+    monkeypatch.setattr(
+        rpm_sign.os, 'killpg', lambda pid, sig: killed.append((pid, sig))
+    )
+    signer_plumbum(sign_result=subprocess.TimeoutExpired('rpmsign', 30))
+
+    with pytest.raises(RpmSignError, match='timed out after 30s'):
+        rpm_sign.sign_rpm_package_with_signer(
+            rpm_file, FINGERPRINT, SIGNER, timeout=30
+        )
+
+    assert killed == [(4242, signal.SIGKILL)]
+
+
+def test_signer_result_is_read_back(signer_plumbum, rpm_file):
+    """rpmsign exiting 0 is not proof that our signature is there."""
+    signer_plumbum(sig=SIG_LINE)
+
+    with pytest.raises(RpmSignError, match='no header signature'):
+        rpm_sign.sign_rpm_package_with_signer(rpm_file, FINGERPRINT, SIGNER)

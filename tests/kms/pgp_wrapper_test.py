@@ -1,8 +1,10 @@
 import asyncio
+from datetime import datetime, timezone
 
 import pgpy
 import pytest
 
+from sign.kms import pgp_wrapper
 from tests.kms.conftest import KEY_ID
 
 CONTENT = b'albs sign file\n'
@@ -35,3 +37,24 @@ def test_hash_prefix_matches_signed_digest(
 
     sig = pgpy.PGPSignature.from_blob(_signature_block(result))
     assert bytes(sig.hash2) == client.last_sign_call['Message'][:2]
+
+
+@pytest.mark.parametrize('digest_algo', ['SHA256', 'SHA384', 'SHA512'])
+def test_streamed_hash_matches_compute_pgp_hash(digest_algo):
+    """The RPM signer hashes in chunks and finishes with the trailer."""
+    created = datetime(2026, 11, 6, tzinfo=timezone.utc)
+    fingerprint = 'D6FD32A40E7DB971B153C210FFAFE84D3118885F'
+    digest, sig_type, hash_algo, _, _ = pgp_wrapper.compute_pgp_hash(
+        CONTENT, digest_algo, True, fingerprint, created
+    )
+
+    hasher = pgp_wrapper.get_hashlib_func(digest_algo)()
+    for byte in CONTENT:
+        hasher.update(bytes([byte]))
+    hasher.update(
+        pgp_wrapper.signature_trailer(
+            sig_type.value, hash_algo, fingerprint, created
+        )
+    )
+
+    assert hasher.digest() == digest

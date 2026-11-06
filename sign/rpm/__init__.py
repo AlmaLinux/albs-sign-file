@@ -4,6 +4,7 @@ from sign.rpm.rpm_sign import (
     read_package_identity,
     read_signature_info,
     sign_rpm_package,
+    sign_rpm_package_with_signer,
     verify_header_signature,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     'read_package_identity',
     'read_signature_info',
     'sign_rpm_package',
+    'sign_rpm_package_with_signer',
     'verify_header_signature',
 ]

@@ -9,6 +9,7 @@ from sign.api.dependencies import get_backend
 from sign.api.routes import router
 from sign.config import settings
 from sign.db.helpers import db_is_connected
+from sign.log import sentry_event_scrubber
 
 logging.basicConfig(
     level="INFO",
@@ -25,6 +26,7 @@ if settings.sentry_dsn:
         ignore_errors=[
             ConnectionResetError,
         ],
+        event_scrubber=sentry_event_scrubber(),
     )
 
 

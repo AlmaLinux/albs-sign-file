@@ -15,6 +15,41 @@ class FakeCommand:
         self._calls.append((self._name, list(args)))
         return self._handler(list(args))
 
+    def popen(self, args, **kwargs):
+        self._calls.append((self._name, list(args)))
+        self._calls.kwargs.append((self._name, kwargs))
+        return FakeProcess(self._handler(list(args)))
+
+
+class FakeProcess:
+    """
+    Stand-in for the process ``popen`` starts. The handler's result is a
+    ``(code, out, err)`` tuple, or an exception that ``communicate`` raises
+    once (e.g. ``subprocess.TimeoutExpired``) before the process is reaped.
+    """
+
+    pid = 4242
+
+    def __init__(self, result):
+        self._result = result
+        self.returncode = None
+
+    def communicate(self, timeout=None):
+        if isinstance(self._result, Exception):
+            exc, self._result = self._result, (-9, '', '')
+            raise exc
+        self.returncode, out, err = self._result
+        return out.encode(), err.encode()
+
+
+class Calls(list):
+    """Recorded ``(binary, args)`` pairs; ``kwargs`` holds the keyword
+    arguments of every ``popen`` (env, new_session)."""
+
+    def __init__(self):
+        super().__init__()
+        self.kwargs = []
+
 
 class FakeLocal:
     """Stand-in for ``plumbum.local``: maps a binary name to a handler."""
@@ -43,7 +78,7 @@ def fake_plumbum(monkeypatch):
     from sign.rpm import rpm_sign
 
     def _install(handlers: Dict[str, Callable]) -> List[Tuple[str, List[str]]]:
-        calls: List[Tuple[str, List[str]]] = []
+        calls: List[Tuple[str, List[str]]] = Calls()
         fake = type('P', (), {'local': FakeLocal(handlers, calls)})
         monkeypatch.setattr(rpm_sign, 'plumbum', fake)
         return calls

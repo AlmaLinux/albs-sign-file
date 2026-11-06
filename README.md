@@ -15,9 +15,10 @@ The service supports two signing backends:
 - **GPG** (default): Uses local GnuPG for signing operations
 - **AWS KMS**: Uses AWS Key Management Service with PGP-compatible signature output
 
-RPM header signing (`/sign-rpm`) is available on the GPG backend only:
-`rpmsign` drives a local gpg with the private key in its keyring, which the
-KMS backend does not provide. The endpoint answers 501 on a KMS deployment.
+RPM header signing (`/sign-rpm`) works on both backends. `rpmsign` asks a
+gpg program for the signature: gpg itself on the GPG backend, and on the KMS
+backend `sign-file-rpm-signer`, which has KMS sign the digest (see
+[Signing RPMs with a KMS key](#signing-rpms-with-a-kms-key)).
 
 ## Installation
 
@@ -187,7 +188,7 @@ gpg:
     - AAAA1111BBBB2222
     - CCCC3333DDDD4444
 
-# RPM header signing (/sign-rpm), GPG backend only
+# RPM header signing (/sign-rpm)
 rpm_sign:
   enabled: true
   # falls back to the global max_upload_bytes when unset
@@ -211,6 +212,8 @@ kms:
   region: us-east-1
   signing_algorithm: RSASSA_PKCS1_V1_5_SHA_256
   max_workers: 10
+  # gpg stand-in rpmsign runs for /sign-rpm; looked up in PATH
+  rpm_signer_binary: sign-file-rpm-signer
   keys:
     - kms_id: alias/almalinux-signing-key
       gpg_fingerprint: AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555
@@ -334,6 +337,7 @@ If you have an existing GPG key, you can import it into AWS KMS using BYOK (Brin
 | `kms.signing_algorithm` | KMS signing algorithm | `RSASSA_PKCS1_V1_5_SHA_256` |
 | `kms.max_workers` | Max concurrent signing operations | `10` |
 | `kms.keys` | List of KMS keys with GPG fingerprints | Required |
+| `kms.rpm_signer_binary` | gpg stand-in `rpmsign` runs for `/sign-rpm`, looked up in `PATH` unless absolute | `sign-file-rpm-signer` |
 
 Each key in `kms.keys` requires:
 - `kms_id`: KMS key ID or alias (e.g., `alias/my-key` or full ARN)
@@ -581,8 +585,9 @@ SWAGGER API documentation available at `/docs` endpoint
 | `/keys` | GET | List the keys the caller may sign with |
 | `/token` | POST | Get JWT access token |
 
-File signing endpoints work with both GPG and KMS backends; `/sign-rpm`
-requires the GPG backend. The `keyid` parameter accepts:
+All signing endpoints work with both GPG and KMS backends; `/sign-rpm` on
+KMS needs an `RSASSA_PKCS1_V1_5_*` signing algorithm. The `keyid` parameter
+accepts:
 - For GPG: Key fingerprint (e.g., `AAAA1111BBBB2222`)
 - For KMS: Key ID or alias (e.g., `alias/my-key`), or the GPG key ID
   (16 hex characters, e.g. `DDDD4444EEEE5555`) or full fingerprint
@@ -731,11 +736,12 @@ signing audit lines.
 | Concurrent `rpmsign` runs per process | `rpm_sign.max_concurrency` | 2 |
 | Time for one `rpmsign` run | `rpm_sign.timeout` | 1200 s |
 
-Signing is serialized across the whole host by the gpg-agent lock that the
-sign slaves also take, so an external caller cannot sign in parallel with
-release signing; `max_concurrency` caps how much of that queue one service
-process can occupy. Size a client's retry budget accordingly: during a
-large release, requests wait rather than fail.
+On the GPG backend, signing is serialized across the whole host by the
+gpg-agent lock that the sign slaves also take, so an external caller cannot
+sign in parallel with release signing; `max_concurrency` caps how much of
+that queue one service process can occupy. Size a client's retry budget
+accordingly: during a large release, requests wait rather than fail. The
+KMS backend takes no gpg-agent lock; `max_concurrency` is the only bound.
 
 | Situation | Response |
 |-----------|----------|
@@ -743,10 +749,10 @@ large release, requests wait rather than fail.
 | Upload is not an RPM package | `400` |
 | Caller is not entitled to the key | `403` |
 | Package is larger than the limit | `413` |
-| KMS backend (no local key for `rpmsign`) | `501` |
+| KMS backend without `sign-file-rpm-signer`, or with a signing algorithm other than `RSASSA_PKCS1_V1_5_*` | `501` |
 | Signing disabled (`rpm_sign.enabled: false`) | `503` |
 | Audit trail not writable | `503`, `Retry-After: 30` |
-| `rpmsign` or the gpg agent failed | `503`, `Retry-After: 30` |
+| `rpmsign`, the gpg agent or KMS failed | `503`, `Retry-After: 30` |
 
 A `503` means the request is worth retrying unchanged; `4xx` means the
 request itself has to change. The failure reason is recorded in the audit
@@ -758,17 +764,62 @@ and nothing is written back to the caller.
 ### Requirements on the signing host
 
 - `rpmsign` must be installed: `dnf install rpm-sign`.
-- The key must be in the gpg keyring the service was started with, and
-  listed under `gpg.keys` so its passphrase is loaded at startup.
+- GPG backend: the key must be in the gpg keyring the service was started
+  with, and listed under `gpg.keys` so its passphrase is loaded at startup.
 - gpg must be configured for loopback pinentry, the way the sign nodes
   already are — `pinentry-mode loopback` in `gpg.conf` and
   `allow-loopback-pinentry` in `gpg-agent.conf`. `rpmsign` shells out to
   gpg without `--pinentry-mode`, so without this gpg tries to open a
   pinentry dialog and the signature fails with `Required environment
   variable not set`.
+- KMS backend: see below.
 - The database must be migrated to at least revision `002`
   (`python3 db_manage.py migrate_upgrade`), which adds the key grant and
   audit tables.
+
+### Signing RPMs with a KMS key
+
+`rpmsign` makes no signature itself: it runs `%__gpg` with gpg's command
+line, feeds it the data to sign on stdin and stores the detached signature
+that comes back. On the KMS backend the service runs
+
+```
+rpmsign --rpmv3 --resign -D '__gpg /usr/local/bin/sign-file-rpm-signer' \
+  -D '_gpg_name <gpg_fingerprint>' -D '_gpg_digest_algo sha256' <package>
+```
+
+and `sign-file-rpm-signer` hashes the data, has KMS sign the digest, and
+writes the OpenPGP signature packet back. Everything else (which signature
+tags to write, the header layout, `--rpmv3`) stays with `rpmsign`, so the
+result is the same as on the GPG backend. Packages signed this way verify
+with `rpm -K`, `dnf`/`yum` `gpgcheck` and `gpg --verify` on rpm 4.8 (EL6)
+through rpm 6.0 (Fedora 44). rpm 6.0 does not read the digests of packages
+built by rpm 4.8, so it reports those as `DIGESTS NOT OK` whether they are
+signed or not; their signatures still verify.
+
+Requirements:
+
+- `pip install '.[kms]'` installs `sign-file-rpm-signer` next to the
+  service. The service looks for it at startup; without it `/sign-rpm`
+  answers 501 and `GET /keys` reports `rpm_signing_available: false`.
+- The service passes the signer the KMS key, its fingerprint, and the AWS
+  region and credentials through `rpmsign`'s environment; with no
+  credentials configured it finds them the way the service does
+  (environment, config files, instance role). The Sentry integration
+  scrubs these variables from the local variables it reports.
+- A `rpm_sign.timeout` kills `rpmsign` together with the signer, so a
+  timed-out request makes no further KMS call.
+- `kms.signing_algorithm` must be `RSASSA_PKCS1_V1_5_SHA_*`: an OpenPGP RSA
+  signature is a PKCS #1 v1.5 one. RPMs are always signed with SHA-256.
+- `gpg_fingerprint` must be the fingerprint of the OpenPGP certificate
+  clients import (`RPM-GPG-KEY-*`): the signature names its issuer by it.
+  The service cannot check it against KMS, because an OpenPGP fingerprint
+  also covers the key's creation time, which KMS does not know.
+
+Each signature starts one `sign-file-rpm-signer` process, about 0.7 s
+with the KMS round trip, half of it Python start-up. A package gets two
+signatures with `--rpmv3`, and also without it when it carries no payload
+digest (packages built by rpm older than 4.14).
 
 # Basic usage
 
