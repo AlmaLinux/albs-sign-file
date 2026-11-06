@@ -18,7 +18,10 @@ class FakeCommand:
     def popen(self, args, **kwargs):
         self._calls.append((self._name, list(args)))
         self._calls.kwargs.append((self._name, kwargs))
-        return FakeProcess(self._handler(list(args)))
+        result = self._handler(list(args))
+        if isinstance(result, OSError):
+            raise result  # the binary could not be started
+        return FakeProcess(result)
 
 
 class FakeProcess:

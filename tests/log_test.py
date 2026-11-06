@@ -16,6 +16,7 @@ import sentry_sdk
 from sign.config import settings
 from sign.kms.rpm_signer import signer_env
 from sign.log import sentry_event_scrubber
+from sign.rpm import rpm_sign
 from tests.sentry_capture import captured_event
 
 # Made up at import: a literal would show up in the source context Sentry
@@ -93,6 +94,37 @@ def test_signer_env_in_a_partial_does_not_leak():
 
     assert SECRET not in event
     assert 'AWS_SECRET_ACCESS_KEY' in event
+
+
+def test_rpmsign_exec_failure_does_not_leak(tmp_path, monkeypatch):
+    """
+    When exec fails, subprocess raises from _execute_child, whose env_list
+    holds the environment as b'KEY=VALUE' bytes no scrubber can see into.
+    Today Sentry only drops it by keeping ten variables per frame; the
+    service does not rely on that and keeps those frames out of the event.
+    """
+    rpmsign = tmp_path / 'rpmsign'
+    rpmsign.write_text('#!/bin/sh\n')
+    rpmsign.chmod(0o644)  # exec fails with EACCES
+    package = tmp_path / 'pkg.rpm'
+    package.write_bytes(rpm_sign.RPM_LEAD_MAGIC + b'\x00' * 92)
+    monkeypatch.setattr(rpm_sign, 'rpmsign_version', lambda binary: '4.16.1')
+    monkeypatch.setattr(rpm_sign, 'delete_signatures', lambda path, **kw: None)
+
+    event = captured_event(
+        lambda: rpm_sign.sign_rpm_package_with_signer(
+            str(package),
+            'A' * 40,
+            '/usr/local/bin/sign-file-rpm-signer',
+            env=_env(),
+            rpmsign_binary=str(rpmsign),
+        ),
+        event_scrubber=sentry_event_scrubber(),
+    )
+
+    assert 'cannot start' in event
+    assert '_execute_child' not in event
+    assert SECRET not in event
 
 
 def test_signer_env_repr_names_variables_only():

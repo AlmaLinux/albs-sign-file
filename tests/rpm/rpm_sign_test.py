@@ -524,6 +524,20 @@ def test_signer_timeout_kills_rpmsign_and_the_signer(
     assert killed == [(4242, signal.SIGKILL)]
 
 
+def test_rpmsign_that_cannot_start_is_a_sign_error(signer_plumbum, rpm_file):
+    """
+    Not chained: the OSError comes from subprocess frames that hold the
+    signer's environment, credentials included.
+    """
+    signer_plumbum(sign_result=PermissionError(13, 'Permission denied'))
+
+    with pytest.raises(RpmSignError, match='Permission denied') as raised:
+        rpm_sign.sign_rpm_package_with_signer(rpm_file, FINGERPRINT, SIGNER)
+
+    assert raised.value.__suppress_context__
+    assert raised.value.__cause__ is None
+
+
 def test_signer_result_is_read_back(signer_plumbum, rpm_file):
     """rpmsign exiting 0 is not proof that our signature is there."""
     signer_plumbum(sig=SIG_LINE)

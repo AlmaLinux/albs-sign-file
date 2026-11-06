@@ -455,15 +455,24 @@ def sign_rpm_package_with_signer(
         f'_gpg_digest_algo {digest_algo}',
         path,
     ])
-    proc = plumbum.local[rpmsign_binary].popen(
-        args,
-        # rpmsign warns when GPG_TTY is unset and stdin is not a terminal
-        env=dict(env or {}, GPG_TTY=os.environ.get('GPG_TTY', '/dev/null')),
-        # The signer is rpmsign's child and shares its output pipes. In a
-        # session of their own a timeout kills both; killing rpmsign alone
-        # would leave the signer running and the pipes open.
-        new_session=True,
-    )
+    try:
+        proc = plumbum.local[rpmsign_binary].popen(
+            args,
+            # rpmsign warns when GPG_TTY is unset and stdin is not a
+            # terminal
+            env=dict(env or {}, GPG_TTY=os.environ.get('GPG_TTY', '/dev/null')),
+            # The signer is rpmsign's child and shares its output pipes. In
+            # a session of their own a timeout kills both; killing rpmsign
+            # alone would leave the signer running and the pipes open.
+            new_session=True,
+        )
+    except OSError as exc:
+        # Raised from inside subprocess, whose frames hold the environment
+        # as KEY=VALUE bytes no error reporter can scrub. Chaining the
+        # error would ship those frames along; the message is enough.
+        raise RpmSignError(
+            f'cannot start {rpmsign_binary}: {exc.strerror}'
+        ) from None
     try:
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
