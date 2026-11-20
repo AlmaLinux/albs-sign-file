@@ -34,11 +34,13 @@ async def lifespan(_app: FastAPI):
     Application startup/shutdown handler.
 
     On startup it verifies database connectivity and eagerly initializes the
-    signing backend. Initializing the backend here, before the server starts
-    accepting requests, ensures the GPG passphrase prompt
-    (``PGPPasswordDB.ask_for_passwords``) runs while the process is still
-    attached to the controlling terminal, instead of being deferred to the
-    first ``/sign`` request.
+    signing backend, before the server starts accepting requests.
+
+    When launched through ``start.py``, the GPG passphrases were already
+    collected once in the launcher and are handed to every worker (see
+    ``sign.pgp.passphrase_handoff``), so workers never prompt. Launched any
+    other way, the worker falls back to collecting them itself, prompting
+    on the terminal if needed; that only works with a single worker.
     """
     logger.info("Checking database connection...")
     if not db_is_connected():

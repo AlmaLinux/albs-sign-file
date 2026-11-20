@@ -11,7 +11,8 @@ class PGPPasswordDB(object):
     def __init__(self, gpg: gnupg.GPG, pgp_keys: list[str],
                  development_mode: bool = False,
                  development_password: str = None,
-                 preloaded_passwords: Optional[Dict[str, str]] = None):
+                 preloaded_passwords: Optional[Dict[str, str]] = None,
+                 verify_preloaded: bool = True):
         """
         Password DB initialization.
         This structure stores GPG keys passwords
@@ -30,6 +31,11 @@ class PGPPasswordDB(object):
             Mapping of keyid -> passphrase fetched from an external source
             (e.g. Bitwarden). Takes precedence over ``development_mode`` and
             interactive prompting.
+        verify_preloaded : bool
+            If False, trust ``preloaded_passwords`` without checking them
+            against the key. Used by web workers for passphrases the
+            launcher already verified: checking restarts the shared
+            gpg-agent, which would disturb the other workers' signing.
         """
         self.__gpg = gpg
         self.__keys = {keyid: {'password': ''} for keyid in pgp_keys}
@@ -40,6 +46,7 @@ class PGPPasswordDB(object):
         self.__development_mode = development_mode
         self.__development_password = development_password
         self.__preloaded_passwords = preloaded_passwords or {}
+        self.__verify_preloaded = verify_preloaded
 
     def ask_for_passwords(self):
         """
@@ -62,14 +69,18 @@ class PGPPasswordDB(object):
                     "PGP key {0} is not found in the gnupg2 database "
                     "available keys {1}".format(keyid, str(existent_keys.keys()))
                 )
+            verify = True
             if keyid in self.__preloaded_passwords:
                 password = self.__preloaded_passwords[keyid]
+                verify = self.__verify_preloaded
             elif self.__development_mode:
                 password = self.__development_password
             else:
                 password = getpass.getpass('\nPlease enter the {0} PGP key '
                                            'password: '.format(keyid))
-            if not verify_pgp_key_password(self.__gpg, keyid, password):
+            if verify and not verify_pgp_key_password(
+                self.__gpg, keyid, password
+            ):
                 raise ConfigurationError(
                     "PGP key {0} password is not valid".format(keyid)
                 )
@@ -78,6 +89,10 @@ class PGPPasswordDB(object):
             self.__keys[keyid]["subkeys"] = [
                 subkey[0] for subkey in key.get("subkeys", [])
             ]
+
+    def get_passwords(self) -> Dict[str, str]:
+        """Return a keyid -> passphrase mapping of every configured key."""
+        return {keyid: key["password"] for keyid, key in self.__keys.items()}
 
     def get_password(self, keyid):
         return self.__keys[keyid]["password"]

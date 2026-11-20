@@ -1,6 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import UploadFile
 
@@ -84,6 +84,50 @@ class SigningBackend(ABC):
 _backend_instance: Optional[SigningBackend] = None
 
 
+def _fetch_external_passphrases() -> Optional[Dict[str, str]]:
+    """Fetch GPG passphrases from the configured secret store, if any."""
+    if not settings.bitwarden_enabled:
+        return None
+    from sign.pgp.bitwarden import fetch_passphrases
+
+    return fetch_passphrases(
+        keyids=settings.pgp_keys,
+        username=settings.bitwarden_username,
+        password=settings.bitwarden_password,
+        password_file=settings.bitwarden_password_file,
+        collection_id=settings.bitwarden_collection_id,
+    )
+
+
+def collect_gpg_passphrases() -> Dict[str, str]:
+    """
+    Collect and verify the passphrases of every configured GPG key.
+
+    Runs in the launcher process before the web workers start. Sources are
+    the same as a worker would use on its own: the secret store, then
+    development mode, then an interactive prompt on the terminal, so an
+    operator types each passphrase once however many workers there are.
+
+    Raises
+    ------
+    sign.pgp.errors.ConfigurationError
+        If a key is missing from the keyring or a passphrase is wrong.
+    """
+    import gnupg
+
+    from sign.pgp.pgp_password_db import PGPPasswordDB
+
+    pass_db = PGPPasswordDB(
+        gnupg.GPG(gpgbinary=settings.gpg_binary, keyring=settings.keyring),
+        settings.pgp_keys,
+        development_mode=settings.pass_db_dev_mode,
+        development_password=settings.pass_db_dev_pass,
+        preloaded_passwords=_fetch_external_passphrases(),
+    )
+    pass_db.ask_for_passwords()
+    return pass_db.get_passwords()
+
+
 def get_signing_backend() -> SigningBackend:
     global _backend_instance
 
@@ -94,18 +138,15 @@ def get_signing_backend() -> SigningBackend:
 
     if backend_type == 'gpg':
         from sign.pgp import PGP
+        from sign.pgp.passphrase_handoff import take_passphrases
 
-        preloaded_passwords = None
-        if settings.bitwarden_enabled:
-            from sign.pgp.bitwarden import fetch_passphrases
-
-            preloaded_passwords = fetch_passphrases(
-                keyids=settings.pgp_keys,
-                username=settings.bitwarden_username,
-                password=settings.bitwarden_password,
-                password_file=settings.bitwarden_password_file,
-                collection_id=settings.bitwarden_collection_id,
-            )
+        # Passphrases handed over by the launcher (start.py) were already
+        # collected and verified there; use them as they are, so a worker
+        # never prompts and never restarts the shared gpg-agent.
+        preloaded_passwords = take_passphrases()
+        verify_preloaded = preloaded_passwords is None
+        if preloaded_passwords is None:
+            preloaded_passwords = _fetch_external_passphrases()
 
         _backend_instance = GPGAdapter(
             PGP(
@@ -117,6 +158,7 @@ def get_signing_backend() -> SigningBackend:
                 max_upload_bytes=settings.max_upload_bytes,
                 tmp_dir=settings.tmp_dir,
                 preloaded_passwords=preloaded_passwords,
+                verify_preloaded_passwords=verify_preloaded,
             )
         )
         logging.info("Using GPG signing backend")

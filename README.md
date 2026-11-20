@@ -126,6 +126,11 @@ SF_HOST_GNUPG="~/.gnupg"
 # SF_RPM_SIGN_MAX_CONCURRENCY - rpmsign runs at once per process
 # default 2
 #
+# SF_GPG_SIGN_MAX_CONCURRENCY - gpg signing runs (/sign, /sign-batch) at
+# once per process. They all share one gpg-agent, which fails requests with
+# 'Cannot allocate memory' when too many sessions are open at once.
+# default 2
+#
 # SF_RPM_SIGN_TIMEOUT - seconds to wait for one rpmsign run
 # default 1200
 #
@@ -183,6 +188,8 @@ gpg:
   binary: /usr/bin/gpg2
   keyring: ~/.gnupg/pubring.kbx
   locks_dir: /tmp/gpg_locks
+  # gpg signing runs (/sign, /sign-batch) this process runs at once
+  sign_max_concurrency: 2
   keys:
     - AAAA1111BBBB2222
     - CCCC3333DDDD4444
@@ -550,6 +557,20 @@ You can edit these files manually if needed, but be careful to maintain consiste
 
 ### Service startup
 Start service using `start.py` script
+
+`start.py` collects the GPG key passphrases once, before uvicorn spawns its
+web workers: from Bitwarden if enabled, else `SF_PASS_DB_DEV_PASS` in
+development mode, else by prompting on the terminal. You are asked for each
+passphrase exactly once, however many workers run; a wrong passphrase stops
+the service before any worker starts. The verified passphrases are handed to
+the workers in an internal environment variable (each worker removes it from
+its own environment as soon as it reads it), so workers never prompt, and
+workers that uvicorn respawns later start without anybody typing the
+passphrase again.
+
+Always start the service through `start.py`: running `uvicorn sign.app:app
+--workers N` directly makes every worker prompt on its own, and only a
+single worker can start that way.
 
 ```bash
 (.venv) % python3 start.py

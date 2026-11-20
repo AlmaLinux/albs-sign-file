@@ -33,6 +33,7 @@ KMS_MAX_WORKERS_DEFAULT = 10
 CONFIG_FILE_DEFAULT = "/etc/sign-file/config.yaml"
 RPM_SIGN_ENABLED_DEFAULT = True
 RPM_SIGN_MAX_CONCURRENCY_DEFAULT = 2
+GPG_SIGN_MAX_CONCURRENCY_DEFAULT = 2
 RPM_SIGN_TIMEOUT_DEFAULT = 1200
 RPMSIGN_BINARY_DEFAULT = "rpmsign"
 RPM_BINARY_DEFAULT = "rpm"
@@ -147,6 +148,16 @@ class Settings(BaseSettings):
     gpg_locks_dir: str = Field(
         default=GPG_LOCKS_DIR,
         description="directory to store locks for gpg",
+    )
+    gpg_sign_max_concurrency: int = Field(
+        default=GPG_SIGN_MAX_CONCURRENCY_DEFAULT,
+        ge=1,
+        description=(
+            "max gpg signing invocations (/sign, /sign-batch) this process "
+            "runs at once. All of them go through the one gpg-agent, which "
+            "fails requests with 'Cannot allocate memory' when too many "
+            "sessions are open at once, and does not sign faster with more."
+        ),
     )
     signing_backend: str = Field(
         default=SIGNING_BACKEND_DEFAULT,
@@ -323,6 +334,10 @@ def create_settings() -> Settings:
             flat_config['keyring'] = gpg['keyring']
         if 'locks_dir' in gpg:
             flat_config['gpg_locks_dir'] = gpg['locks_dir']
+        if 'sign_max_concurrency' in gpg:
+            flat_config['gpg_sign_max_concurrency'] = (
+                gpg['sign_max_concurrency']
+            )
         if 'keys' in gpg:
             flat_config['pgp_keys'] = gpg['keys']
 
@@ -423,6 +438,7 @@ def create_settings() -> Settings:
         'SF_GPG_BINARY': 'gpg_binary',
         'SF_KEYRING': 'keyring',
         'SF_GPG_LOCKS_DIR': 'gpg_locks_dir',
+        'SF_GPG_SIGN_MAX_CONCURRENCY': 'gpg_sign_max_concurrency',
         'SF_MAX_UPLOAD_BYTES': 'max_upload_bytes',
         'SF_TMP_FILE_DIR': 'tmp_dir',
         'SF_DB_URL': 'db_url',
