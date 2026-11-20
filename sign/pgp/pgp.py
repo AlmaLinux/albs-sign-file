@@ -1,8 +1,11 @@
 import asyncio
 import contextlib
+import functools
 import logging
 import os
+import subprocess  # nosec B404 - runs gpg with an argument list, no shell
 import tempfile
+import threading
 from typing import List, Tuple
 
 import aiofiles
@@ -26,9 +29,20 @@ from sign.rpm.rpm_sign import (
 from sign.utils.hashing import get_hasher, hash_file
 from sign.utils.locking import (
     GPG_AGENT_LOCK_FILENAME,
+    async_exclusive_lock,
+    async_shared_lock,
     exclusive_lock,
     shared_lock,
 )
+
+# seconds to wait for a single gpg signing invocation
+GPG_SIGN_TIMEOUT = 1200
+
+
+@functools.lru_cache(maxsize=None)
+def _gpg_sign_slots() -> threading.BoundedSemaphore:
+    """Per-process cap on concurrent gpg signing invocations."""
+    return threading.BoundedSemaphore(settings.gpg_sign_max_concurrency)
 
 
 class PGP:
@@ -42,11 +56,13 @@ class PGP:
         pass_db_dev_pass: str = None,
         tmp_dir: str = '/tmp',
         preloaded_passwords: dict = None,
+        verify_preloaded_passwords: bool = True,
     ):
         self.__gpg = gnupg.GPG(gpgbinary=gpg_binary, keyring=keyring)
         self.__pass_db = PGPPasswordDB(
             self.__gpg, pgp_keys, pass_db_dev_mode, pass_db_dev_pass,
             preloaded_passwords=preloaded_passwords,
+            verify_preloaded=verify_preloaded_passwords,
         )
         self.max_upload_bytes = max_upload_bytes
         self.tmp_dir = tmp_dir
@@ -65,6 +81,129 @@ class PGP:
     @staticmethod
     def _is_yubikey(keyid: str) -> bool:
         return keyid in (settings.yubikey_keyids or [])
+
+    @contextlib.asynccontextmanager
+    async def _key_guard(self, keyid: str):
+        """
+        Let one request at a time in this process use a Yubikey-backed key.
+
+        Signing with such a key is serialized by an exclusive flock anyway.
+        Queueing the other requests here, on an asyncio lock, keeps them
+        from each parking a worker thread in that flock: enough of them
+        would use up the thread pool that the request holding the key
+        needs to finish. Software keys are not serialized.
+        """
+        if not self._is_yubikey(keyid):
+            yield
+            return
+        locks = self.__dict__.setdefault('_yubikey_locks', {})
+        if keyid not in locks:
+            locks[keyid] = asyncio.Lock()
+        async with locks[keyid]:
+            yield
+
+    def _run_gpg_sign(
+        self,
+        keyid: str,
+        path: str,
+        password: str,
+        detach_sign: bool,
+        digest_algo: str,
+    ) -> Tuple[bytes, int]:
+        """
+        Run gpg to sign ``path``; return its output and exit status.
+
+        Blocking: call it off the event loop. gpg writes the signature to
+        ``<path>.asc``.
+
+        Software keys get the passphrase on stdin (``--passphrase-fd``),
+        which spares the pty and pexpect's fixed send/close delays: about
+        120 ms of the ~270 ms a signature took. Yubikey-backed keys keep
+        answering gpg's prompt through pexpect, as the card PIN has always
+        been entered that way.
+        """
+        args = [
+            '--yes',
+            '--pinentry-mode',
+            'loopback',
+            '--digest-algo',
+            digest_algo,
+            '--detach-sign' if detach_sign else '--clear-sign',
+            '--armor',
+            '--default-key',
+            keyid,
+            path,
+        ]
+        env = {"LC_ALL": "en_US.UTF-8"}
+        # Only the gpg run itself holds a slot. Holding it across the lock
+        # waits or the gpg-agent restart could deadlock against a request
+        # that holds the shared gpg-agent lock while waiting for a slot.
+        with _gpg_sign_slots():
+            return self._exec_gpg_sign(keyid, args, password, env)
+
+    def _exec_gpg_sign(
+        self,
+        keyid: str,
+        args: List[str],
+        password: str,
+        env: dict,
+    ) -> Tuple[bytes, int]:
+        if self._is_yubikey(keyid):
+            sign_cmd = plumbum.local[self.__gpg.gpgbinary][args]
+            return pexpect.run(
+                command=' '.join(sign_cmd.formulate()),
+                events={"Enter passphrase:.*": "{0}\r".format(password)},
+                env=env,
+                timeout=GPG_SIGN_TIMEOUT,
+                withexitstatus=1,
+                # poll() has no FD_SETSIZE (1024) limit, unlike select();
+                # required when the process holds many open fds. See PF-673.
+                use_poll=True,
+            )
+        # An argument list without a shell: the keyid and path are passed to
+        # gpg as single arguments, never parsed by a shell.
+        result = subprocess.run(  # nosec B603
+            [self.__gpg.gpgbinary, '--batch', '--passphrase-fd', '0', *args],
+            input=f'{password}\n'.encode(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+            timeout=GPG_SIGN_TIMEOUT,
+            check=False,
+        )
+        return result.stdout, result.returncode
+
+    def _sign_file_locked(
+        self,
+        keyid: str,
+        path: str,
+        password: str,
+        detach_sign: bool,
+        digest_algo: str,
+    ) -> Tuple[bytes, int]:
+        """
+        Sign ``path`` holding the gpg-agent locks; blocking.
+
+        The flock calls block too, so they run on the same thread as gpg
+        rather than on the event loop.
+        """
+        is_yubikey = self._is_yubikey(keyid)
+        with shared_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
+            if is_yubikey:
+                with exclusive_lock(settings.gpg_locks_dir, keyid):
+                    result = self._run_gpg_sign(
+                        keyid, path, password, detach_sign, digest_algo
+                    )
+            else:
+                result = self._run_gpg_sign(
+                    keyid, path, password, detach_sign, digest_algo
+                )
+        if is_yubikey:
+            with exclusive_lock(
+                settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME
+            ):
+                restart_gpg_agent()
+        return result
 
     async def _store_upload(
         self,
@@ -122,7 +261,7 @@ class PGP:
             # of them this process runs at once, and the gpg-agent lock
             # taken inside sign_rpm_package serializes against the sign
             # slaves running on the same host.
-            async with self.__rpm_semaphore:
+            async with self.__rpm_semaphore, self._key_guard(keyid):
                 signature = await asyncio.to_thread(
                     sign_rpm_package,
                     dest_path,
@@ -182,59 +321,27 @@ class PGP:
                 # if the upload-size check aborts mid-read. See PF-673.
                 file.file.close()
 
-            hash_before = hash_file(
-                fd.name,
-                hasher=get_hasher(),
+            # Everything blocking (hashing, gpg, the flock calls) runs on a
+            # worker thread, so the event loop keeps serving other requests
+            # meanwhile and one worker signs several files concurrently.
+            hash_before = await asyncio.to_thread(
+                hash_file, fd.name, hasher=get_hasher()
             )
 
             # signing tmp file with gpg binary
             # using pgp.sign_file() will result in wrong signature
             password = self.__pass_db.get_password(keyid)
-            sign_cmd = plumbum.local[self.__gpg.gpgbinary][
-                '--yes',
-                '--pinentry-mode',
-                'loopback',
-                '--digest-algo',
-                digest_algo,
-                '--detach-sign' if detach_sign else '--clear-sign',
-                '--armor',
-                '--default-key',
-                keyid,
-                fd.name,
-            ]
-            is_yubikey = self._is_yubikey(keyid)
-            with shared_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
-                if is_yubikey:
-                    with exclusive_lock(settings.gpg_locks_dir, keyid):
-                        out, status = pexpect.run(
-                            command=' '.join(sign_cmd.formulate()),
-                            events={"Enter passphrase:.*": "{0}\r".format(password)},
-                            env={"LC_ALL": "en_US.UTF-8"},
-                            timeout=1200,
-                            withexitstatus=1,
-                            # poll() has no FD_SETSIZE (1024) limit, unlike
-                            # select(); required when the process holds many
-                            # open fds. See PF-673.
-                            use_poll=True,
-                        )
-                else:
-                    out, status = pexpect.run(
-                        command=' '.join(sign_cmd.formulate()),
-                        events={"Enter passphrase:.*": "{0}\r".format(password)},
-                        env={"LC_ALL": "en_US.UTF-8"},
-                        timeout=1200,
-                        withexitstatus=1,
-                        # poll() has no FD_SETSIZE (1024) limit, unlike
-                        # select(); required when the process holds many
-                        # open fds. See PF-673.
-                        use_poll=True,
-                    )
-            if is_yubikey:
-                with exclusive_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
-                    restart_gpg_agent()
-            hash_after = hash_file(
-                fd.name,
-                hasher=get_hasher(),
+            async with self._key_guard(keyid):
+                out, status = await asyncio.to_thread(
+                    self._sign_file_locked,
+                    keyid,
+                    fd.name,
+                    password,
+                    detach_sign,
+                    digest_algo,
+                )
+            hash_after = await asyncio.to_thread(
+                hash_file, fd.name, hasher=get_hasher()
             )
 
             # it would be nice if we could know the platform too
@@ -287,43 +394,34 @@ class PGP:
                 # if the upload-size check aborts mid-read. See PF-673.
                 file.file.close()
 
-            hash_before = hash_file(fd.name, hasher=get_hasher())
+            hash_before = await asyncio.to_thread(
+                hash_file, fd.name, hasher=get_hasher()
+            )
 
             password = self.__pass_db.get_password(keyid)
-            sign_cmd = plumbum.local[self.__gpg.gpgbinary][
-                '--yes',
-                '--pinentry-mode',
-                'loopback',
-                '--digest-algo',
-                digest_algo,
-                '--detach-sign' if detach_sign else '--clear-sign',
-                '--armor',
-                '--default-key',
-                keyid,
-                fd.name,
-            ]
 
-            # Serialize pexpect calls within the process. sign_batch already
+            # Serialize gpg calls within the batch. sign_batch already
             # signs sequentially (PF-673), but this semaphore keeps
             # _sign_batch_file safe if it is ever awaited concurrently, so
-            # only one gpg/pexpect invocation talks to the gpg-agent at a time.
-            # Cross-process coordination is handled by the shared/exclusive
-            # lock taken by the caller (sign_batch).
+            # one batch runs one gpg invocation at a time. Cross-process
+            # coordination is handled by the shared/exclusive lock taken by
+            # the caller (sign_batch). gpg runs on a worker thread so the
+            # event loop stays free for other requests.
             if self.__gpg_semaphore is None:
                 self.__gpg_semaphore = asyncio.Semaphore(1)
             async with self.__gpg_semaphore:
-                out, status = pexpect.run(
-                    command=' '.join(sign_cmd.formulate()),
-                    events={"Enter passphrase:.*": "{0}\r".format(password)},
-                    env={"LC_ALL": "en_US.UTF-8"},
-                    timeout=1200,
-                    withexitstatus=1,
-                    # poll() has no FD_SETSIZE (1024) limit, unlike select();
-                    # required when the process holds many open fds. See PF-673.
-                    use_poll=True,
+                out, status = await asyncio.to_thread(
+                    self._run_gpg_sign,
+                    keyid,
+                    fd.name,
+                    password,
+                    detach_sign,
+                    digest_algo,
                 )
 
-            hash_after = hash_file(fd.name, hasher=get_hasher())
+            hash_after = await asyncio.to_thread(
+                hash_file, fd.name, hasher=get_hasher()
+            )
             self.__syslog.sign_log(
                 os.path.basename(fd.name),
                 hash_before,
@@ -405,16 +503,26 @@ class PGP:
                 )
             return signed
 
-        with shared_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
-            if is_yubikey:
-                with exclusive_lock(settings.gpg_locks_dir, keyid):
+        # The locks are held across awaits, so they are taken with the async
+        # variants: waiting for them on the event loop would deadlock this
+        # worker against another of its own requests that holds them.
+        async with self._key_guard(keyid):
+            async with async_shared_lock(
+                settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME
+            ):
+                if is_yubikey:
+                    async with async_exclusive_lock(
+                        settings.gpg_locks_dir, keyid
+                    ):
+                        results = await _sign_all()
+                else:
                     results = await _sign_all()
-            else:
-                results = await _sign_all()
 
-        if is_yubikey:
-            with exclusive_lock(settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME):
-                restart_gpg_agent()
+            if is_yubikey:
+                async with async_exclusive_lock(
+                    settings.gpg_locks_dir, GPG_AGENT_LOCK_FILENAME
+                ):
+                    await asyncio.to_thread(restart_gpg_agent)
 
         logging.info(
             "Batch signing completed successfully: %d files", len(results)
